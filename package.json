@@ -7,7 +7,9 @@
     "build": "tsc -p tsconfig.build.json",
     "test": "vitest run",
     "test:watch": "vitest",
-    "start": "node dist/hub.js"
+    "start": "node dist/hub.js",
+    "smoke": "npm run build && node dist/hub.js agents.smoke.json",
+    "full": "npm run build && node dist/hub.js agents.config.json"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",

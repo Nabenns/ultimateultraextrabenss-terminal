@@ -33,7 +33,8 @@ export async function handleWorkerEvent(
 }
 
 export async function main(): Promise<void> {
-  const cfg = loadConfig();
+  // Config path precedence: CLI arg (process.argv[2]) > HUB_CONFIG env > default.
+  const cfg = loadConfig(process.argv[2]);
   const board = new StatusBoard((line) => appendFileSync("hub.log", line + "\n"));
 
   const clients = new Map<string, OpencodeClient>();
