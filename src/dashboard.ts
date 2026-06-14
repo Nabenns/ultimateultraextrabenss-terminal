@@ -26,6 +26,21 @@ export interface DashboardDeps {
    * can run status-only in tests.
    */
   onChat?: (message: string) => Promise<string>;
+  /**
+   * Drains and returns autonomous replies produced by the correction loop since
+   * the last call (for the web to poll). Optional.
+   */
+  drainReplies?: () => { text: string; at: number }[];
+  /**
+   * Returns the live conversation (user/assistant turns) for a worker by name,
+   * fetched from its opencode session. Optional. Empty array if none/unknown.
+   */
+  getConversation?: (workerName: string) => Promise<{ role: string; text: string }[]>;
+  /**
+   * Aborts the active session of a worker by name. Resolves true if an abort was
+   * issued, false if the worker/session was not found. Optional.
+   */
+  onAbort?: (workerName: string) => Promise<boolean>;
 }
 
 /** Build the JSON snapshot the dashboard renders. Pure + directly testable. */
@@ -87,7 +102,8 @@ function dashboardHtml(): string {
   /* Worker grid */
   .workers-wrap { overflow-y: auto; padding: 16px 24px; }
   main { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
-  .worker { border: 1px solid #21262d; border-radius: 8px; background: #161b22; overflow: hidden; }
+  .worker { border: 1px solid #21262d; border-radius: 8px; background: #161b22; overflow: hidden; cursor: pointer; transition: border-color .15s; }
+  .worker:hover { border-color: #3b82f6; }
   .worker-head { padding: 10px 14px; display: flex; align-items: center; gap: 8px;
                  border-bottom: 1px solid #21262d; }
   .worker-head .name { font-weight: 600; flex: 1; }
@@ -99,6 +115,22 @@ function dashboardHtml(): string {
   .badge { font-size: 11px; padding: 1px 7px; border-radius: 4px; color: #0d1117; font-weight: 700; }
   .empty { color: #7d8590; font-style: italic; padding: 6px 0; }
   .summary-val { font-weight: 700; }
+  /* Worker conversation modal */
+  .modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,.6); display: none;
+    align-items: center; justify-content: center; z-index: 10; }
+  .modal-bg.open { display: flex; }
+  .modal { width: min(760px, 92vw); max-height: 84vh; background: #0d1117;
+    border: 1px solid #30363d; border-radius: 10px; display: flex; flex-direction: column; }
+  .modal-head { padding: 12px 16px; border-bottom: 1px solid #21262d; display: flex;
+    align-items: center; gap: 10px; }
+  .modal-head .title { font-weight: 600; flex: 1; }
+  .modal-head button { background: none; border: 1px solid #30363d; color: #e6edf3;
+    border-radius: 6px; padding: 4px 10px; cursor: pointer; font: inherit; }
+  .modal-body { overflow-y: auto; padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; }
+  .turn { padding: 8px 12px; border-radius: 8px; white-space: pre-wrap; word-break: break-word; }
+  .turn.user { background: #1f6feb22; border: 1px solid #1f6feb44; }
+  .turn.assistant { background: #161b22; border: 1px solid #21262d; }
+  .turn .role { font-size: 11px; text-transform: uppercase; color: #7d8590; margin-bottom: 3px; }
 </style>
 </head>
 <body>
@@ -118,6 +150,16 @@ function dashboardHtml(): string {
     </form>
   </section>
   <div class="workers-wrap"><main id="workers"></main></div>
+</div>
+<div class="modal-bg" id="modalbg">
+  <div class="modal">
+    <div class="modal-head">
+      <span class="title" id="modaltitle">worker</span>
+      <button onclick="abortWorker()" id="abortbtn">stop</button>
+      <button onclick="closeWorker()">close</button>
+    </div>
+    <div class="modal-body" id="modalbody"></div>
+  </div>
 </div>
 <script>
 const STATE_COLORS = ${JSON.stringify(STATE_COLORS)};
@@ -145,7 +187,7 @@ async function refresh(){
     document.getElementById('updated').textContent =
       'updated ' + new Date(d.generatedAt).toLocaleTimeString();
     document.getElementById('workers').innerHTML = d.workers.map(w =>
-      '<div class="worker"><div class="worker-head">'+healthDot(w.healthy)
+      '<div class="worker" data-worker="'+esc(w.name)+'" onclick="openWorker(\''+esc(w.name)+'\')"><div class="worker-head">'+healthDot(w.healthy)
       + '<span class="name">'+esc(w.name)+'</span>'
       + '<span class="muted">'+w.jobs.length+' job'+(w.jobs.length===1?'':'s')+'</span></div>'
       + '<div class="jobs">'+(w.jobs.length ? w.jobs.map(jobView).join('') : '<div class="empty">no jobs yet</div>')+'</div></div>'
@@ -195,8 +237,64 @@ form.addEventListener('submit', (e) => { e.preventDefault(); sendChat(); });
 box.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat(); }
 });
+async function pollReplies(){
+  try {
+    const res = await fetch('/api/replies');
+    const d = await res.json();
+    for (const r of (d.replies || [])) addMsg('ai', r.text);
+  } catch (e) { /* ignore */ }
+}
+let openWorkerName = null;
+async function openWorker(name){
+  openWorkerName = name;
+  document.getElementById('modaltitle').textContent = name + ' — conversation';
+  document.getElementById('modalbg').classList.add('open');
+  await loadWorkerConvo();
+}
+function closeWorker(){
+  openWorkerName = null;
+  document.getElementById('modalbg').classList.remove('open');
+}
+async function abortWorker(){
+  if (!openWorkerName) return;
+  const btn = document.getElementById('abortbtn');
+  btn.disabled = true;
+  try {
+    const res = await fetch('/api/worker/' + encodeURIComponent(openWorkerName) + '/abort', { method: 'POST' });
+    const d = await res.json();
+    addMsg('sys', d.ok ? ('stopped ' + openWorkerName) : ('nothing to stop for ' + openWorkerName));
+  } catch (e) {
+    addMsg('sys', 'gagal stop ' + openWorkerName);
+  } finally {
+    btn.disabled = false;
+    loadWorkerConvo();
+  }
+}
+async function loadWorkerConvo(){
+  if (!openWorkerName) return;
+  try {
+    const res = await fetch('/api/worker/' + encodeURIComponent(openWorkerName));
+    const d = await res.json();
+    const body = document.getElementById('modalbody');
+    if (!d.turns || !d.turns.length){
+      body.innerHTML = '<div class="empty">Belum ada percakapan. Worker ini belum dapat tugas.</div>';
+      return;
+    }
+    body.innerHTML = d.turns.map(t =>
+      '<div class="turn '+(t.role==='user'?'user':'assistant')+'">'
+      + '<div class="role">'+esc(t.role)+'</div>'+esc(t.text)+'</div>'
+    ).join('');
+  } catch (e) {
+    document.getElementById('modalbody').innerHTML = '<div class="empty">gagal memuat percakapan</div>';
+  }
+}
+document.getElementById('modalbg').addEventListener('click', (e) => {
+  if (e.target.id === 'modalbg') closeWorker();
+});
 refresh();
 setInterval(refresh, 2000);
+setInterval(pollReplies, 2500);
+setInterval(() => { if (openWorkerName) loadWorkerConvo(); }, 2500);
 </script>
 </body>
 </html>`;
@@ -233,6 +331,31 @@ export async function startDashboard(deps: DashboardDeps, port: number): Promise
     if (req.url === "/api/status") {
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify(buildSnapshot(deps)));
+      return;
+    }
+    if (req.url === "/api/replies") {
+      const replies = deps.drainReplies ? deps.drainReplies() : [];
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ replies }));
+      return;
+    }
+    if (req.url?.startsWith("/api/worker/") && req.url.endsWith("/abort") && req.method === "POST") {
+      void (async () => {
+        const mid = req.url!.slice("/api/worker/".length, -"/abort".length);
+        const name = decodeURIComponent(mid);
+        const ok = deps.onAbort ? await deps.onAbort(name).catch(() => false) : false;
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ ok }));
+      })();
+      return;
+    }
+    if (req.url?.startsWith("/api/worker/")) {
+      void (async () => {
+        const name = decodeURIComponent(req.url!.slice("/api/worker/".length));
+        const turns = deps.getConversation ? await deps.getConversation(name).catch(() => []) : [];
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ name, turns }));
+      })();
       return;
     }
     if (req.url === "/api/chat" && req.method === "POST") {

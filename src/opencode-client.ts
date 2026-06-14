@@ -97,4 +97,45 @@ export class OpencodeClient {
   async abort(sessionID: string): Promise<void> {
     await this.post(`/session/${sessionID}/abort`);
   }
+
+  /**
+   * Best-effort: returns the full conversation (user/assistant turns with their
+   * concatenated text) for a session, or [] on error/unexpected shape.
+   */
+  async conversation(sessionID: string): Promise<ConversationTurn[]> {
+    try {
+      const res = await this.get(`/session/${sessionID}/message`);
+      const messages = (await res.json()) as unknown;
+      return extractConversation(messages);
+    } catch {
+      return [];
+    }
+  }
+}
+
+export interface ConversationTurn {
+  role: string;
+  text: string;
+}
+
+/** Extract user/assistant turns + text from an opencode /message payload. */
+export function extractConversation(messages: unknown): ConversationTurn[] {
+  if (!Array.isArray(messages)) return [];
+  const turns: ConversationTurn[] = [];
+  for (const entry of messages) {
+    const role = (entry as { info?: { role?: string } })?.info?.role;
+    const parts = (entry as { parts?: unknown }).parts;
+    if (typeof role !== "string" || !Array.isArray(parts)) continue;
+    const text = parts
+      .filter(
+        (p): p is { type: "text"; text: string } =>
+          !!p &&
+          (p as { type?: string }).type === "text" &&
+          typeof (p as { text?: unknown }).text === "string",
+      )
+      .map((p) => p.text)
+      .join("");
+    if (text.trim()) turns.push({ role, text });
+  }
+  return turns;
 }

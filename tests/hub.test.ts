@@ -4,13 +4,15 @@ import { StatusBoard } from "../src/status-board.js";
 import type { WorkerSpec } from "../src/types.js";
 
 describe("handleWorkerEvent", () => {
+  const aiStub = () => ({ notifyJobSettled: vi.fn(async () => {}) });
+
   it("verifies the job tied to a session when it goes idle", async () => {
     const board = new StatusBoard();
     const job = board.addJob("frontend", "a");
     board.update(job.id, { state: "running", sessionID: "ses_1" });
     const orchestrator = { verify: vi.fn(async () => {}), dispatch: vi.fn() };
 
-    await handleWorkerEvent(board, orchestrator as never, "frontend", {
+    await handleWorkerEvent(board, orchestrator as never, aiStub() as never, "frontend", {
       type: "session.idle",
       properties: { sessionID: "ses_1" },
     });
@@ -21,7 +23,7 @@ describe("handleWorkerEvent", () => {
   it("ignores non-idle events", async () => {
     const board = new StatusBoard();
     const orchestrator = { verify: vi.fn(async () => {}), dispatch: vi.fn() };
-    await handleWorkerEvent(board, orchestrator as never, "frontend", {
+    await handleWorkerEvent(board, orchestrator as never, aiStub() as never, "frontend", {
       type: "message.updated",
       properties: { sessionID: "ses_1" },
     });
@@ -36,12 +38,48 @@ describe("handleWorkerEvent", () => {
     board.update(second.id, { state: "running", sessionID: "ses_1" });
     const orchestrator = { verify: vi.fn(async () => {}), dispatch: vi.fn() };
 
-    await handleWorkerEvent(board, orchestrator as never, "frontend", {
+    await handleWorkerEvent(board, orchestrator as never, aiStub() as never, "frontend", {
       type: "session.idle",
       properties: { sessionID: "ses_1" },
     });
 
     expect(orchestrator.verify).toHaveBeenCalledWith(second.id);
+  });
+
+  it("notifies the orchestrator-AI when the job settles to done", async () => {
+    const board = new StatusBoard();
+    const job = board.addJob("frontend", "a");
+    board.update(job.id, { state: "running", sessionID: "ses_1" });
+    // verify marks it done
+    const orchestrator = {
+      verify: vi.fn(async () => {
+        board.update(job.id, { state: "done" });
+      }),
+      dispatch: vi.fn(),
+    };
+    const ai = aiStub();
+
+    await handleWorkerEvent(board, orchestrator as never, ai as never, "frontend", {
+      type: "session.idle",
+      properties: { sessionID: "ses_1" },
+    });
+
+    expect(ai.notifyJobSettled).toHaveBeenCalledWith(job.id);
+  });
+
+  it("does not notify the orchestrator-AI while the job is still running", async () => {
+    const board = new StatusBoard();
+    const job = board.addJob("frontend", "a");
+    board.update(job.id, { state: "running", sessionID: "ses_1" });
+    const orchestrator = { verify: vi.fn(async () => {}), dispatch: vi.fn() }; // stays running
+    const ai = aiStub();
+
+    await handleWorkerEvent(board, orchestrator as never, ai as never, "frontend", {
+      type: "session.idle",
+      properties: { sessionID: "ses_1" },
+    });
+
+    expect(ai.notifyJobSettled).not.toHaveBeenCalled();
   });
 
   it("does not reject when orchestrator.verify rejects", async () => {
@@ -56,7 +94,7 @@ describe("handleWorkerEvent", () => {
     };
 
     await expect(
-      handleWorkerEvent(board, orchestrator as never, "frontend", {
+      handleWorkerEvent(board, orchestrator as never, aiStub() as never, "frontend", {
         type: "session.idle",
         properties: { sessionID: "ses_1" },
       }),

@@ -11,6 +11,9 @@ build/
 # Logs
 *.log
 
+# Hub runtime state (conversation history)
+hub-history.json
+
 # Env
 .env
 .env.local

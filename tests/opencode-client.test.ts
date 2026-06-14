@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { OpencodeClient } from "../src/opencode-client.js";
+import { OpencodeClient, extractConversation } from "../src/opencode-client.js";
 
 function mockFetch(responses: Record<string, unknown>) {
   return vi.fn(async (url: string, _init?: RequestInit) => {
@@ -79,5 +79,23 @@ describe("OpencodeClient", () => {
     const fetchFn = mockFetch({ "/message": {} });
     const client = new OpencodeClient("http://localhost:4106", fetchFn);
     expect(await client.lastAssistantText("ses_123")).toBeNull();
+  });
+});
+
+describe("extractConversation", () => {
+  it("extracts user/assistant turns with concatenated text", () => {
+    const messages = [
+      { info: { role: "user" }, parts: [{ type: "text", text: "build login" }] },
+      { info: { role: "assistant" }, parts: [{ type: "text", text: "Built " }, { type: "text", text: "POST /login" }] },
+    ];
+    expect(extractConversation(messages)).toEqual([
+      { role: "user", text: "build login" },
+      { role: "assistant", text: "Built POST /login" },
+    ]);
+  });
+
+  it("skips entries with no text and returns [] for non-arrays", () => {
+    expect(extractConversation({})).toEqual([]);
+    expect(extractConversation([{ info: { role: "assistant" }, parts: [{ type: "tool", id: "x" }] }])).toEqual([]);
   });
 });

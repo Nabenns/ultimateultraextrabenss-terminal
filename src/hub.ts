@@ -1,4 +1,4 @@
-import { appendFileSync } from "node:fs";
+import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { spawn } from "node:child_process";
 import { loadConfig, HUB_PORT } from "./config.js";
@@ -10,13 +10,16 @@ import { listenToWorker, type OpencodeEvent } from "./event-listener.js";
 import { startDashboard } from "./dashboard.js";
 import { LlmClient, loadModelConfig } from "./llm-client.js";
 import { OrchestratorAI } from "./orchestrator-ai.js";
+import type { ChatMessage } from "./llm-client.js";
 import type { WorkerSpec } from "./types.js";
 
 
-/** SSE→verify bridge: when a worker's session goes idle, verify its job. */
+/** SSE→verify bridge: when a worker's session goes idle, verify its job, then
+ * notify the Orchestrator-AI so it can re-engage once its jobs settle. */
 export async function handleWorkerEvent(
   board: StatusBoard,
   orchestrator: Pick<Orchestrator, "verify">,
+  orchestratorAI: Pick<OrchestratorAI, "notifyJobSettled">,
   workerName: string,
   event: OpencodeEvent,
 ): Promise<void> {
@@ -25,7 +28,13 @@ export async function handleWorkerEvent(
     const sessionID = event.properties.sessionID;
     if (!sessionID) return;
     const job = board.findLatestBySession(sessionID);
-    if (job) await orchestrator.verify(job.id);
+    if (!job) return;
+    await orchestrator.verify(job.id);
+    // Re-engage the router brain only for terminal jobs (done/failed).
+    const settled = board.get(job.id);
+    if (settled && (settled.state === "done" || settled.state === "failed")) {
+      await orchestratorAI.notifyJobSettled(job.id);
+    }
   } catch (err) {
     // Best-effort: never reject so the SSE listener's fire-and-forget call
     // (void handleWorkerEvent) can't become an unhandled rejection.
@@ -62,57 +71,106 @@ export async function main(): Promise<void> {
   // opencode config (same provider/model as the rest of the toolchain), so no
   // secrets live in this repo.
   const llm = new LlmClient(loadModelConfig());
+
+  // Buffer of autonomous replies (from the correction loop) for the web to poll.
+  const autoReplies: { text: string; at: number }[] = [];
+
+  // Persist the orchestrator conversation so it survives a Hub restart.
+  const historyFile = "hub-history.json";
+  let initialHistory: ChatMessage[] = [];
+  try {
+    initialHistory = JSON.parse(readFileSync(historyFile, "utf8")) as ChatMessage[];
+  } catch {
+    // No prior history (first run) — start empty.
+  }
+
   const orchestratorAI = new OrchestratorAI(
     llm,
     orchestrator,
     board,
     cfg.workers.map((w) => w.name),
+    {
+      onReply: (text) => autoReplies.push({ text, at: Date.now() }),
+      initialHistory,
+      onHistoryChange: (history) => {
+        try {
+          writeFileSync(historyFile, JSON.stringify(history));
+        } catch (err) {
+          console.error("failed to persist hub history:", err);
+        }
+      },
+    },
   );
 
-  // Spawn worker terminals.
-  const manager = new WorkerManager(cfg.workers);
-  manager.spawnAll();
+  // Tracks last-known health per worker; shared with the dashboard.
+  // Seeded to false (= "starting") so the UI shows workers coming up.
+  const health = new Map<string, boolean>(cfg.workers.map((w) => [w.name, false] as const));
 
-  // Tracks last-known health per worker; shared with the dashboard (Tier 3).
-  const health = new Map<string, boolean>();
-
-  // Wait for each worker to become healthy, then listen to its events.
-  const startup = await waitForWorkers(cfg.workers, clients);
-  for (const name of startup.healthy) health.set(name, true);
-  for (const name of startup.unhealthy) {
-    health.set(name, false);
-    console.warn(`[startup] worker ${name} did not become healthy within timeout`);
-  }
-  if (startup.unhealthy.length > 0) {
-    console.warn(
-      `[startup] ${startup.unhealthy.length}/${cfg.workers.length} workers unhealthy: ${startup.unhealthy.join(", ")}`,
-    );
-  }
-
-  const stopListeners: Array<() => void> = [];
-  for (const w of cfg.workers) {
-    const stop = listenToWorker(w.name, baseUrls.get(w.name)!, (name, ev) => {
-      void handleWorkerEvent(board, orchestrator, name, ev);
-    });
-    stopListeners.push(stop);
-  }
-
-  // Periodic health watch: restart a worker's tab when it transitions to unhealthy.
-  const healthTimer = setInterval(() => {
-    void runHealthCheck(cfg.workers, clients, manager, health);
-  }, 15000);
-
+  // Start the dashboard FIRST, before spawning/waiting on workers, so the web UI
+  // is reachable immediately and workers visibly fill in as they become healthy.
   const stopDashboard = await startDashboard(
     {
       board,
       workerNames: cfg.workers.map((w) => w.name),
       health,
       onChat: (message) => orchestratorAI.handle(message),
+      drainReplies: () => autoReplies.splice(0, autoReplies.length),
+      getConversation: async (name) => {
+        const client = clients.get(name);
+        if (!client) return [];
+        // Find this worker's active session via its latest job on the board.
+        const job = board.getAll().filter((j) => j.role === name && j.sessionID).at(-1);
+        if (!job?.sessionID) return [];
+        return client.conversation(job.sessionID);
+      },
+      onAbort: async (name) => {
+        const client = clients.get(name);
+        if (!client) return false;
+        const job = board.getAll().filter((j) => j.role === name && j.sessionID).at(-1);
+        if (!job?.sessionID) return false;
+        await client.abort(job.sessionID);
+        return true;
+      },
     },
     HUB_PORT,
   );
   console.log(`Hub dashboard (chat + status) at http://127.0.0.1:${HUB_PORT}`);
   openBrowser(`http://127.0.0.1:${HUB_PORT}`);
+
+  // Spawn worker terminals.
+  const manager = new WorkerManager(cfg.workers);
+  manager.spawnAll();
+
+  const stopListeners: Array<() => void> = [];
+
+  // Background: wait for workers to become healthy, then attach SSE listeners.
+  // Runs without blocking the dashboard, which is already live.
+  void (async () => {
+    const startup = await waitForWorkers(cfg.workers, clients, 60000, (name, healthy) => {
+      health.set(name, healthy);
+    });
+    for (const name of startup.healthy) health.set(name, true);
+    for (const name of startup.unhealthy) {
+      health.set(name, false);
+      console.warn(`[startup] worker ${name} did not become healthy within timeout`);
+    }
+    if (startup.unhealthy.length > 0) {
+      console.warn(
+        `[startup] ${startup.unhealthy.length}/${cfg.workers.length} workers unhealthy: ${startup.unhealthy.join(", ")}`,
+      );
+    }
+    for (const w of cfg.workers) {
+      const stop = listenToWorker(w.name, baseUrls.get(w.name)!, (name, ev) => {
+        void handleWorkerEvent(board, orchestrator, orchestratorAI, name, ev);
+      });
+      stopListeners.push(stop);
+    }
+  })();
+
+  // Periodic health watch: restart a worker's tab when it transitions to unhealthy.
+  const healthTimer = setInterval(() => {
+    void runHealthCheck(cfg.workers, clients, manager, health);
+  }, 15000);
 
   process.on("SIGINT", () => {
     clearInterval(healthTimer);
@@ -154,13 +212,17 @@ async function waitForWorkers(
   workers: WorkerSpec[],
   clients: Map<string, HealthClient>,
   timeoutMs = 60000,
+  onHealthy?: (name: string, healthy: boolean) => void,
 ): Promise<StartupHealth> {
   const results = await Promise.all(
     workers.map(async (w): Promise<{ name: string; healthy: boolean }> => {
       const client = clients.get(w.name)!;
       const deadline = Date.now() + timeoutMs;
       while (Date.now() < deadline) {
-        if (await client.isHealthy()) return { name: w.name, healthy: true };
+        if (await client.isHealthy()) {
+          onHealthy?.(w.name, true);
+          return { name: w.name, healthy: true };
+        }
         await new Promise((r) => setTimeout(r, 1000));
       }
       return { name: w.name, healthy: false };

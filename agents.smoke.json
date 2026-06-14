@@ -1,5 +1,5 @@
 {
   "workers": [
-    { "name": "frontend", "port": 4106, "cwd": ".", "agent": "frontend", "model": null, "attach": true }
+    { "name": "frontend", "port": 4106, "cwd": ".", "agent": "frontend", "model": null, "attach": false }
   ]
 }

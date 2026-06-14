@@ -1,10 +1,20 @@
 import type { ChatMessage, LlmClient } from "./llm-client.js";
 import type { Orchestrator, Assignment } from "./orchestrator.js";
 import type { StatusBoard } from "./status-board.js";
+import type { Job } from "./types.js";
 
 export interface Decision {
   reply: string;
   assignments: Assignment[];
+}
+
+export interface OrchestratorAIOptions {
+  /** Called with every reply the AI produces — user-initiated and autonomous. */
+  onReply?: (reply: string) => void;
+  /** Seed conversation history (e.g. restored from disk on restart). */
+  initialHistory?: ChatMessage[];
+  /** Called whenever history changes, for persistence. */
+  onHistoryChange?: (history: ChatMessage[]) => void;
 }
 
 /**
@@ -67,21 +77,60 @@ The "reply" explains what you're doing (or asks your question). "assignments" is
 /**
  * The router brain: holds conversation history, asks the LLM what to do with
  * each user message, dispatches the chosen assignments via the Orchestrator,
- * and returns the reply text to show in the web chat.
+ * and re-engages automatically when those jobs finish (the correction loop).
  */
 export class OrchestratorAI {
   private history: ChatMessage[] = [];
+  /** Job IDs dispatched in the current round, still awaiting completion. */
+  private pendingJobs = new Set<string>();
 
   constructor(
     private readonly llm: Pick<LlmClient, "chat">,
     private readonly orchestrator: Pick<Orchestrator, "dispatch">,
-    private readonly board: Pick<StatusBoard, "summary" | "getAll">,
+    private readonly board: Pick<StatusBoard, "summary" | "getAll"> & { get?: (id: string) => Job | undefined },
     private readonly roles: string[],
-  ) {}
+    private readonly options: OrchestratorAIOptions = {},
+  ) {
+    if (options.initialHistory) this.history = [...options.initialHistory];
+  }
 
+  /** Snapshot of the current conversation history (for persistence). */
+  getHistory(): ChatMessage[] {
+    return [...this.history];
+  }
+
+  private pushHistory(msg: ChatMessage): void {
+    this.history.push(msg);
+    this.options.onHistoryChange?.(this.history);
+  }
+
+  /** Handle a user message: ask the LLM, dispatch, and return the reply. */
   async handle(userMessage: string): Promise<string> {
-    this.history.push({ role: "user", content: userMessage });
+    this.pushHistory({ role: "user", content: userMessage });
+    return this.think();
+  }
 
+  /**
+   * Called by the Hub when a job finishes. When ALL jobs dispatched in the
+   * current round have settled, the AI re-engages with their results to decide
+   * whether to continue, correct, or report — without the user typing again.
+   */
+  async notifyJobSettled(jobId: string): Promise<void> {
+    if (!this.pendingJobs.has(jobId)) return;
+    this.pendingJobs.delete(jobId);
+    if (this.pendingJobs.size > 0) return; // wait for the rest of the round
+
+    const results = this.collectResults();
+    this.pushHistory({
+      role: "user",
+      content: `[system] All dispatched workers have finished. Results:\n${results}\n\nReview the results. If the goal is met, report back to the user. If more work or correction is needed, dispatch follow-up assignments.`,
+    });
+    const reply = await this.think();
+    this.options.onReply?.(reply);
+  }
+
+  /** One LLM turn: build context, get a decision, dispatch, track jobs. */
+  private async think(): Promise<string> {
     const statusLine = JSON.stringify(this.board.summary());
     const messages: ChatMessage[] = [
       { role: "system", content: SYSTEM_PROMPT(this.roles) },
@@ -92,14 +141,26 @@ export class OrchestratorAI {
     const raw = await this.llm.chat(messages);
     const decision = parseDecision(raw);
 
-    this.history.push({ role: "assistant", content: decision.reply });
+    this.pushHistory({ role: "assistant", content: decision.reply });
 
     if (decision.assignments.length > 0) {
       // Only dispatch to known roles; ignore hallucinated role names.
       const valid = decision.assignments.filter((a) => this.roles.includes(a.role));
-      if (valid.length > 0) await this.orchestrator.dispatch(valid);
+      if (valid.length > 0) {
+        const jobs = await this.orchestrator.dispatch(valid);
+        for (const j of jobs) this.pendingJobs.add(j.id);
+      }
     }
 
     return decision.reply;
+  }
+
+  /** Summarize the outcome of jobs the board knows about for the LLM. */
+  private collectResults(): string {
+    const lines = this.board.getAll().map((j) => {
+      const detail = j.summary ?? (j.remainingTodos?.length ? `remaining: ${j.remainingTodos.join("; ")}` : "(no output)");
+      return `- ${j.role} [${j.state}]: ${detail}`;
+    });
+    return lines.length ? lines.join("\n") : "(no jobs)";
   }
 }

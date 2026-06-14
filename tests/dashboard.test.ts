@@ -92,4 +92,30 @@ describe("dashboard HTTP server", () => {
       stop();
     }
   });
+
+  it("GET /api/worker/:name returns that worker's conversation turns", async () => {
+    const getConversation = vi.fn(async (name: string) => [{ role: "assistant", text: `hi from ${name}` }]);
+    const stop = await startDashboard({ ...baseDeps(), getConversation }, 4194);
+    try {
+      const res = await fetch("http://127.0.0.1:4194/api/worker/backend");
+      const data = (await res.json()) as { name: string; turns: { role: string; text: string }[] };
+      expect(getConversation).toHaveBeenCalledWith("backend");
+      expect(data.turns[0]!.text).toBe("hi from backend");
+    } finally {
+      stop();
+    }
+  });
+
+  it("POST /api/worker/:name/abort routes to onAbort", async () => {
+    const onAbort = vi.fn(async () => true);
+    const stop = await startDashboard({ ...baseDeps(), onAbort }, 4193);
+    try {
+      const res = await fetch("http://127.0.0.1:4193/api/worker/tester/abort", { method: "POST" });
+      const data = (await res.json()) as { ok: boolean };
+      expect(onAbort).toHaveBeenCalledWith("tester");
+      expect(data.ok).toBe(true);
+    } finally {
+      stop();
+    }
+  });
 });

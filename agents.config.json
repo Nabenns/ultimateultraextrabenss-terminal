@@ -1,15 +1,15 @@
 {
   "workers": [
-    { "name": "visionary", "port": 4101, "cwd": "C:\\Users\\USER\\gt\\shopibot123", "agent": "visionary", "model": null, "attach": true },
-    { "name": "advocate", "port": 4102, "cwd": "C:\\Users\\USER\\gt\\shopibot123", "agent": "advocate", "model": null, "attach": true },
-    { "name": "skeptic", "port": 4103, "cwd": "C:\\Users\\USER\\gt\\shopibot123", "agent": "skeptic", "model": null, "attach": true },
-    { "name": "decider", "port": 4104, "cwd": "C:\\Users\\USER\\gt\\shopibot123", "agent": "decider", "model": null, "attach": true },
-    { "name": "architect", "port": 4105, "cwd": "C:\\Users\\USER\\gt\\shopibot123", "agent": "architect", "model": null, "attach": true },
-    { "name": "frontend", "port": 4106, "cwd": "C:\\Users\\USER\\gt\\shopibot123", "agent": "frontend", "model": null, "attach": true },
-    { "name": "backend", "port": 4107, "cwd": "C:\\Users\\USER\\gt\\shopibot123", "agent": "backend", "model": null, "attach": true },
-    { "name": "tester", "port": 4108, "cwd": "C:\\Users\\USER\\gt\\shopibot123", "agent": "tester", "model": null, "attach": true },
-    { "name": "reviewer", "port": 4109, "cwd": "C:\\Users\\USER\\gt\\shopibot123", "agent": "reviewer", "model": null, "attach": true },
-    { "name": "researcher", "port": 4110, "cwd": "C:\\Users\\USER\\gt\\shopibot123", "agent": "researcher", "model": null, "attach": true },
-    { "name": "docs", "port": 4111, "cwd": "C:\\Users\\USER\\gt\\shopibot123", "agent": "docs", "model": null, "attach": true }
+    { "name": "visionary", "port": 4101, "cwd": "C:\\Users\\USER\\gt\\shopibot123", "agent": "visionary", "model": null, "attach": false },
+    { "name": "advocate", "port": 4102, "cwd": "C:\\Users\\USER\\gt\\shopibot123", "agent": "advocate", "model": null, "attach": false },
+    { "name": "skeptic", "port": 4103, "cwd": "C:\\Users\\USER\\gt\\shopibot123", "agent": "skeptic", "model": null, "attach": false },
+    { "name": "decider", "port": 4104, "cwd": "C:\\Users\\USER\\gt\\shopibot123", "agent": "decider", "model": null, "attach": false },
+    { "name": "architect", "port": 4105, "cwd": "C:\\Users\\USER\\gt\\shopibot123", "agent": "architect", "model": null, "attach": false },
+    { "name": "frontend", "port": 4106, "cwd": "C:\\Users\\USER\\gt\\shopibot123", "agent": "frontend", "model": null, "attach": false },
+    { "name": "backend", "port": 4107, "cwd": "C:\\Users\\USER\\gt\\shopibot123", "agent": "backend", "model": null, "attach": false },
+    { "name": "tester", "port": 4108, "cwd": "C:\\Users\\USER\\gt\\shopibot123", "agent": "tester", "model": null, "attach": false },
+    { "name": "reviewer", "port": 4109, "cwd": "C:\\Users\\USER\\gt\\shopibot123", "agent": "reviewer", "model": null, "attach": false },
+    { "name": "researcher", "port": 4110, "cwd": "C:\\Users\\USER\\gt\\shopibot123", "agent": "researcher", "model": null, "attach": false },
+    { "name": "docs", "port": 4111, "cwd": "C:\\Users\\USER\\gt\\shopibot123", "agent": "docs", "model": null, "attach": false }
   ]
 }
