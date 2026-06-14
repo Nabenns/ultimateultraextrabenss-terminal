@@ -34,11 +34,12 @@ export function listenToWorker(
   fetchFn: typeof fetch = fetch,
 ): () => void {
   let stopped = false;
+  const controller = new AbortController();
 
   async function loop(): Promise<void> {
     while (!stopped) {
       try {
-        const res = await fetchFn(`${baseUrl}/event`);
+        const res = await fetchFn(`${baseUrl}/event`, { signal: controller.signal });
         if (!res.body) throw new Error("no body");
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
@@ -62,5 +63,6 @@ export function listenToWorker(
   void loop();
   return () => {
     stopped = true;
+    controller.abort();
   };
 }
