@@ -133,6 +133,7 @@ export function dashboardHtml(): string {
   .job .task { white-space: pre-wrap; word-break: break-word; }
   .job .meta { font-size: 12px; }
   .badge { font-size: 11px; padding: 1px 7px; border-radius: 4px; color: #0d1117; font-weight: 700; }
+  .elapsed { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
   .empty { color: var(--muted); font-style: italic; padding: 6px 0; }
   .summary-val { font-weight: 700; }
   /* Worker conversation modal */
@@ -210,14 +211,35 @@ function healthDot(h){
   const t = h === true ? 'healthy' : h === false ? 'down' : 'unknown';
   return '<span class="dot" style="background:'+c+'" title="'+t+'"></span>';
 }
+function fmtDur(ms){
+  if (ms == null || ms < 0) return '';
+  const s = Math.floor(ms/1000);
+  const m = Math.floor(s/60);
+  const r = s%60;
+  return m + ':' + String(r).padStart(2,'0');
+}
 function jobView(j){
   const color = STATE_COLORS[j.state] || '#888';
   const summary = j.summary ? '<div class="meta muted">'+esc(j.summary)+'</div>' : '';
   const todos = (j.remainingTodos && j.remainingTodos.length)
     ? '<div class="meta muted">todo: '+esc(j.remainingTodos.join('; '))+'</div>' : '';
+  // Timing badge: live ticking while running, total duration when finished.
+  let timing = '';
+  if (j.state === 'running' && j.startedAt) {
+    timing = ' <span class="elapsed" data-started="'+j.startedAt+'">'+fmtDur(Date.now()-j.startedAt)+'</span>';
+  } else if ((j.state === 'done' || j.state === 'failed') && j.startedAt && j.finishedAt) {
+    timing = ' <span class="elapsed">'+fmtDur(j.finishedAt-j.startedAt)+'</span>';
+  }
   return '<div class="job" style="border-left-color:'+color+'">'
-    + '<div><span class="badge" style="background:'+color+'">'+j.state+'</span></div>'
+    + '<div><span class="badge" style="background:'+color+'">'+j.state+'</span>'+timing+'</div>'
     + '<div class="task">'+esc(j.prompt)+'</div>'+summary+todos+'</div>';
+}
+// Tick all live "running" elapsed counters once per second without a full refetch.
+function tickElapsed(){
+  const now = Date.now();
+  document.querySelectorAll('.elapsed[data-started]').forEach(el => {
+    el.textContent = fmtDur(now - Number(el.dataset.started));
+  });
 }
 async function refresh(){
   try {
@@ -368,6 +390,7 @@ document.getElementById('workers').addEventListener('click', (e) => {
 refresh();
 setInterval(refresh, 2000);
 setInterval(pollReplies, 2500);
+setInterval(tickElapsed, 1000);
 setInterval(() => { if (openWorkerName) loadWorkerConvo(); }, 2500);
 </script>
 </body>

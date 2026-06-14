@@ -9,6 +9,10 @@ export interface Job {
   summary: string | null;
   remainingTodos: string[];
   lastUpdate: number;
+  /** ms epoch when the job entered the "running" state (null until then). */
+  startedAt: number | null;
+  /** ms epoch when the job reached a terminal state (null until then). */
+  finishedAt: number | null;
 }
 
 export interface WorkerSpec {

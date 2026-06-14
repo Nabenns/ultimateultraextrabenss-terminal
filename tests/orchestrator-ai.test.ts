@@ -216,4 +216,24 @@ describe("OrchestratorAI history persistence", () => {
     expect(snapshots.at(-1)).toBeGreaterThanOrEqual(2);
     expect(ai.getHistory().length).toBeGreaterThanOrEqual(2);
   });
+
+  it("caps the history window sent to the LLM (does not flood with old turns)", async () => {
+    const seed: { role: "user" | "assistant"; content: string }[] = [];
+    for (let i = 0; i < 40; i++) {
+      seed.push({ role: i % 2 === 0 ? "user" : "assistant", content: `old turn ${i}` });
+    }
+    const llm = { chat: vi.fn(async (_m: { role: string; content: string }[]) => '{"reply":"ok","assignments":[]}') };
+    const ai = new OrchestratorAI(llm as never, { dispatch: vi.fn() } as never, board as never, ["backend"], {
+      initialHistory: seed,
+    });
+
+    await ai.handle("new request");
+    const sent = (llm.chat.mock.calls[0]?.[0] ?? []) as { role: string; content: string }[];
+    // 2 system messages + a bounded window (not all 41 history entries).
+    expect(sent.length).toBeLessThanOrEqual(2 + 12);
+    // The newest user message must be included.
+    expect(JSON.stringify(sent)).toContain("new request");
+    // A very old turn must have been dropped.
+    expect(JSON.stringify(sent)).not.toContain("old turn 0");
+  });
 });

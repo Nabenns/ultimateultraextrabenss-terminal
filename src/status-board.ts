@@ -20,6 +20,8 @@ export class StatusBoard {
       summary: null,
       remainingTodos: [],
       lastUpdate: Date.now(),
+      startedAt: null,
+      finishedAt: null,
     };
     this.jobs.set(job.id, job);
     this.write(JSON.stringify({ event: "add", job }));
@@ -30,7 +32,14 @@ export class StatusBoard {
   update(id: string, patch: Partial<Omit<Job, "id">>): void {
     const job = this.jobs.get(id);
     if (!job) throw new Error(`unknown job: ${id}`);
-    Object.assign(job, patch, { lastUpdate: Date.now() });
+    const now = Date.now();
+    // Stamp lifecycle timestamps on state transitions (only the first time each).
+    const timing: Partial<Job> = {};
+    if (patch.state === "running" && job.startedAt === null) timing.startedAt = now;
+    if ((patch.state === "done" || patch.state === "failed") && job.finishedAt === null) {
+      timing.finishedAt = now;
+    }
+    Object.assign(job, patch, timing, { lastUpdate: now });
     this.write(JSON.stringify({ event: "update", job }));
   }
 

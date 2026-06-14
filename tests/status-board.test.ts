@@ -60,3 +60,23 @@ describe("StatusBoard", () => {
     expect(board.findLatestBySession("missing")).toBeUndefined();
   });
 });
+
+describe("StatusBoard timing", () => {
+  it("stamps startedAt on first running transition and finishedAt on terminal", () => {
+    const board = new StatusBoard();
+    const job = board.addJob("frontend", "x");
+    expect(board.get(job.id)!.startedAt).toBeNull();
+    expect(board.get(job.id)!.finishedAt).toBeNull();
+
+    board.update(job.id, { state: "running", sessionID: "s1" });
+    const started = board.get(job.id)!.startedAt;
+    expect(typeof started).toBe("number");
+
+    // a second running update must not reset startedAt
+    board.update(job.id, { state: "running" });
+    expect(board.get(job.id)!.startedAt).toBe(started);
+
+    board.update(job.id, { state: "done" });
+    expect(typeof board.get(job.id)!.finishedAt).toBe("number");
+  });
+});

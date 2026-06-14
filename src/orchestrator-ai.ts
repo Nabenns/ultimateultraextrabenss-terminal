@@ -59,6 +59,9 @@ function extractJson(raw: string): { reply?: unknown; assignments?: unknown[] } 
   return null;
 }
 
+/** Max number of recent history messages sent to the LLM per turn. */
+const HISTORY_WINDOW = 12;
+
 const SYSTEM_PROMPT = (roles: string[]) => `You are the Orchestrator for a team of AI worker agents, each a separate opencode process with a fixed role. Your job is to read the user's request and decide which role(s) should handle it, then assign each a concrete task. You do NOT do the work yourself — you route and coordinate.
 
 Available roles (deliberation, execution, support):
@@ -132,10 +135,14 @@ export class OrchestratorAI {
   /** One LLM turn: build context, get a decision, dispatch, track jobs. */
   private async think(): Promise<string> {
     const statusLine = JSON.stringify(this.board.summary());
+    // Only send a recent window of history. Unbounded history (especially the
+    // verbose "all workers finished" entries) accumulates and drowns the current
+    // request, making the model chat instead of dispatch.
+    const recent = this.history.slice(-HISTORY_WINDOW);
     const messages: ChatMessage[] = [
       { role: "system", content: SYSTEM_PROMPT(this.roles) },
       { role: "system", content: `Current job status: ${statusLine}` },
-      ...this.history,
+      ...recent,
     ];
 
     const raw = await this.llm.chat(messages);
