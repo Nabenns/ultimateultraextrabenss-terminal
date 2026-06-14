@@ -41,6 +41,18 @@ describe("Orchestrator", () => {
     expect(client.promptAsync).toHaveBeenCalledWith("ses_x", "find the risks", "skeptic", null);
   });
 
+  it("passes the role's model override (from modelFor) into promptAsync", async () => {
+    const board = new StatusBoard();
+    const client = fakeClient();
+    const agentFor = () => null;
+    const modelFor = (role: string) => (role === "backend" ? "anthropic/claude-x" : null);
+    const orch = new Orchestrator(board, () => client as never, agentFor, modelFor);
+
+    await orch.dispatch([{ role: "backend", task: "build" }]);
+
+    expect(client.promptAsync).toHaveBeenCalledWith("ses_x", "build", null, "anthropic/claude-x");
+  });
+
   it("reuses an existing session for a role on a second dispatch", async () => {
     const board = new StatusBoard();
     const client = fakeClient();

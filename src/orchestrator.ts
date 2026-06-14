@@ -21,6 +21,9 @@ export type ClientFactory = (role: string) => WorkerClient;
 /** Resolves a role to the opencode agent name it should run as (or null). */
 export type AgentResolver = (role: string) => string | null;
 
+/** Resolves a role to a model override (or null to use the worker default). */
+export type ModelResolver = (role: string) => string | null;
+
 export class Orchestrator {
   private sessions = new Map<string, string>(); // role -> sessionID
 
@@ -28,6 +31,7 @@ export class Orchestrator {
     private readonly board: StatusBoard,
     private readonly clientFor: ClientFactory,
     private readonly agentFor: AgentResolver = () => null,
+    private readonly modelFor: ModelResolver = () => null,
   ) {}
 
   // Single-writer assumption: dispatch is driven sequentially by the Hub
@@ -50,7 +54,7 @@ export class Orchestrator {
    */
   async ensureSession(role: string): Promise<{ sessionID: string; deliver: (text: string) => Promise<void> }> {
     const { client, sessionID } = await this.sessionFor(role);
-    return { sessionID, deliver: (text: string) => client.promptAsync(sessionID, text, this.agentFor(role), null) };
+    return { sessionID, deliver: (text: string) => client.promptAsync(sessionID, text, this.agentFor(role), this.modelFor(role)) };
   }
 
   async dispatch(assignments: Assignment[]): Promise<Job[]> {
@@ -71,7 +75,7 @@ export class Orchestrator {
       // in this batch are skipped); recovery is via SSE-driven verify and
       // Hermes re-dispatch. "failed" state is reserved for worker-reported failure.
       this.board.update(job.id, { state: "running", sessionID });
-      await client.promptAsync(sessionID, a.task, this.agentFor(a.role), null);
+      await client.promptAsync(sessionID, a.task, this.agentFor(a.role), this.modelFor(a.role));
       jobs.push(this.board.get(job.id)!);
     }
     return jobs;

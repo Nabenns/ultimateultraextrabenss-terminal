@@ -65,7 +65,13 @@ export async function main(): Promise<void> {
   const agentByRole = new Map(cfg.workers.map((w) => [w.name, w.agent] as const));
   const agentFor = (role: string): string | null => agentByRole.get(role) ?? null;
 
-  const orchestrator = new Orchestrator(board, clientFor, agentFor);
+  // Per-role model overrides, mutable at runtime via the web model picker.
+  const modelByRole = new Map<string, string>(
+    cfg.workers.flatMap((w) => (w.model ? [[w.name, w.model] as const] : [])),
+  );
+  const modelFor = (role: string): string | null => modelByRole.get(role) ?? null;
+
+  const orchestrator = new Orchestrator(board, clientFor, agentFor, modelFor);
 
   // Router brain: the web chat talks to this. It reads creds from the user's
   // opencode config (same provider/model as the rest of the toolchain), so no
@@ -106,6 +112,9 @@ export async function main(): Promise<void> {
   // Seeded to false (= "starting") so the UI shows workers coming up.
   const health = new Map<string, boolean>(cfg.workers.map((w) => [w.name, false] as const));
 
+  // Cached fleet-wide token/cost totals, refreshed periodically (see usageTimer).
+  let usageTotals = { tokens: 0, cost: 0 };
+
   // Start the dashboard FIRST, before spawning/waiting on workers, so the web UI
   // is reachable immediately and workers visibly fill in as they become healthy.
   const stopDashboard = await startDashboard(
@@ -113,6 +122,13 @@ export async function main(): Promise<void> {
       board,
       workerNames: cfg.workers.map((w) => w.name),
       health,
+      getUsage: () => usageTotals,
+      getModels: () =>
+        Object.fromEntries(cfg.workers.map((w) => [w.name, modelByRole.get(w.name) ?? null])),
+      setModel: (role, model) => {
+        if (model) modelByRole.set(role, model);
+        else modelByRole.delete(role);
+      },
       onChat: (message) => orchestratorAI.handle(message),
       drainReplies: () => autoReplies.splice(0, autoReplies.length),
       getConversation: async (name) => {
@@ -172,8 +188,28 @@ export async function main(): Promise<void> {
     void runHealthCheck(cfg.workers, clients, manager, health);
   }, 15000);
 
+  // Periodic usage refresh: sum tokens/cost across each worker's active session.
+  const usageTimer = setInterval(() => {
+    void (async () => {
+      let tokens = 0;
+      let cost = 0;
+      const seen = new Set<string>();
+      for (const job of board.getAll()) {
+        if (!job.sessionID || seen.has(job.sessionID)) continue;
+        seen.add(job.sessionID);
+        const client = clients.get(job.role);
+        if (!client) continue;
+        const u = await client.sessionUsage(job.sessionID);
+        tokens += u.tokens;
+        cost += u.cost;
+      }
+      usageTotals = { tokens, cost };
+    })();
+  }, 10000);
+
   process.on("SIGINT", () => {
     clearInterval(healthTimer);
+    clearInterval(usageTimer);
     for (const stop of stopListeners) stop();
     stopDashboard();
     process.exit(0);

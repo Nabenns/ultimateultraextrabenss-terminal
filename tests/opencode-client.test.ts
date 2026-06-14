@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { OpencodeClient, extractConversation } from "../src/opencode-client.js";
+import { OpencodeClient, extractConversation, sumUsage } from "../src/opencode-client.js";
 
 function mockFetch(responses: Record<string, unknown>) {
   return vi.fn(async (url: string, _init?: RequestInit) => {
@@ -97,5 +97,22 @@ describe("extractConversation", () => {
   it("skips entries with no text and returns [] for non-arrays", () => {
     expect(extractConversation({})).toEqual([]);
     expect(extractConversation([{ info: { role: "assistant" }, parts: [{ type: "tool", id: "x" }] }])).toEqual([]);
+  });
+});
+
+describe("sumUsage", () => {
+  it("sums tokens.total and cost across messages", () => {
+    const messages = [
+      { info: { role: "assistant", tokens: { total: 100 }, cost: 0.01 } },
+      { info: { role: "assistant", tokens: { total: 250 }, cost: 0.02 } },
+      { info: { role: "user" } },
+    ];
+    const u = sumUsage(messages);
+    expect(u.tokens).toBe(350);
+    expect(u.cost).toBeCloseTo(0.03);
+  });
+  it("returns zeros for non-array / empty", () => {
+    expect(sumUsage({})).toEqual({ tokens: 0, cost: 0 });
+    expect(sumUsage([])).toEqual({ tokens: 0, cost: 0 });
   });
 });

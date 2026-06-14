@@ -6,6 +6,7 @@ import type { Job } from "./types.js";
 export interface DashboardSnapshot {
   generatedAt: number;
   summary: ReturnType<StatusBoard["summary"]>;
+  usage: { tokens: number; cost: number };
   workers: {
     name: string;
     healthy: boolean | null; // null = unknown (not yet checked)
@@ -41,6 +42,12 @@ export interface DashboardDeps {
    * issued, false if the worker/session was not found. Optional.
    */
   onAbort?: (workerName: string) => Promise<boolean>;
+  /** Returns cached fleet-wide token/cost totals (refreshed by the Hub). Optional. */
+  getUsage?: () => { tokens: number; cost: number };
+  /** Returns the current per-role model overrides (role -> model or null). Optional. */
+  getModels?: () => Record<string, string | null>;
+  /** Sets (or clears, when model is null/empty) a role's model override. Optional. */
+  setModel?: (role: string, model: string | null) => void;
 }
 
 /** Build the JSON snapshot the dashboard renders. Pure + directly testable. */
@@ -54,6 +61,7 @@ export function buildSnapshot(deps: DashboardDeps): DashboardSnapshot {
   return {
     generatedAt: Date.now(),
     summary: deps.board.summary(),
+    usage: deps.getUsage ? deps.getUsage() : { tokens: 0, cost: 0 },
     workers,
     jobs,
   };
@@ -75,69 +83,91 @@ function dashboardHtml(): string {
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>ben-terminal Hub</title>
 <style>
-  :root { color-scheme: dark; }
+  :root {
+    color-scheme: dark;
+    --bg: #0d1117; --fg: #e6edf3; --panel: #161b22; --border: #21262d;
+    --border2: #30363d; --muted: #7d8590; --accent: #3b82f6; --send: #238636;
+  }
+  body.light {
+    color-scheme: light;
+    --bg: #ffffff; --fg: #1f2328; --panel: #f6f8fa; --border: #d0d7de;
+    --border2: #d0d7de; --muted: #636c76; --accent: #0969da; --send: #1a7f37;
+  }
   * { box-sizing: border-box; }
   body { margin: 0; font: 14px/1.5 ui-monospace, "Cascadia Code", Consolas, monospace;
-         background: #0d1117; color: #e6edf3; display: flex; flex-direction: column; height: 100vh; }
-  header { padding: 14px 24px; border-bottom: 1px solid #21262d; display: flex;
+         background: var(--bg); color: var(--fg); display: flex; flex-direction: column; height: 100vh; }
+  header { padding: 14px 24px; border-bottom: 1px solid var(--border); display: flex;
            align-items: baseline; gap: 16px; flex-wrap: wrap; flex: none; }
   h1 { font-size: 16px; margin: 0; font-weight: 600; }
   .summary { display: flex; gap: 14px; flex-wrap: wrap; }
-  .pill { padding: 2px 10px; border-radius: 999px; background: #161b22; border: 1px solid #21262d; }
-  .muted { color: #7d8590; }
+  .pill { padding: 2px 10px; border-radius: 999px; background: var(--panel); border: 1px solid var(--border); }
+  .muted { color: var(--muted); }
+  .spacer { flex: 1; }
+  #theme { background: none; border: 1px solid var(--border2); color: var(--fg);
+    border-radius: 6px; padding: 3px 10px; cursor: pointer; font: inherit; }
   .layout { flex: 1; display: grid; grid-template-columns: 380px 1fr; min-height: 0; }
   /* Chat panel */
-  .chat { border-right: 1px solid #21262d; display: flex; flex-direction: column; min-height: 0; }
+  .chat { border-right: 1px solid var(--border); display: flex; flex-direction: column; min-height: 0; }
   .chat-log { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 10px; }
   .msg { padding: 8px 12px; border-radius: 8px; max-width: 92%; white-space: pre-wrap; word-break: break-word; }
   .msg.user { align-self: flex-end; background: #1f6feb33; border: 1px solid #1f6feb55; }
-  .msg.ai { align-self: flex-start; background: #161b22; border: 1px solid #21262d; }
-  .msg.sys { align-self: center; color: #7d8590; font-size: 12px; font-style: italic; }
-  .chat-input { border-top: 1px solid #21262d; padding: 12px; display: flex; gap: 8px; flex: none; }
-  .chat-input textarea { flex: 1; resize: none; background: #0d1117; color: #e6edf3;
-    border: 1px solid #30363d; border-radius: 8px; padding: 8px 10px; font: inherit; min-height: 44px; }
-  .chat-input button { background: #238636; color: #fff; border: none; border-radius: 8px;
+  .msg.ai { align-self: flex-start; background: var(--panel); border: 1px solid var(--border); }
+  .msg.sys { align-self: center; color: var(--muted); font-size: 12px; font-style: italic; }
+  .chat-input { border-top: 1px solid var(--border); padding: 12px; display: flex; gap: 8px; flex: none; }
+  .chat-input textarea { flex: 1; resize: none; background: var(--bg); color: var(--fg);
+    border: 1px solid var(--border2); border-radius: 8px; padding: 8px 10px; font: inherit; min-height: 44px; }
+  .chat-input button { background: var(--send); color: #fff; border: none; border-radius: 8px;
     padding: 0 16px; font: inherit; font-weight: 600; cursor: pointer; }
   .chat-input button:disabled { opacity: .5; cursor: default; }
   /* Worker grid */
   .workers-wrap { overflow-y: auto; padding: 16px 24px; }
   main { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
-  .worker { border: 1px solid #21262d; border-radius: 8px; background: #161b22; overflow: hidden; cursor: pointer; transition: border-color .15s; }
-  .worker:hover { border-color: #3b82f6; }
+  .worker { border: 1px solid var(--border); border-radius: 8px; background: var(--panel); overflow: hidden; cursor: pointer; transition: border-color .15s; }
+  .worker:hover { border-color: var(--accent); }
   .worker-head { padding: 10px 14px; display: flex; align-items: center; gap: 8px;
-                 border-bottom: 1px solid #21262d; }
+                 border-bottom: 1px solid var(--border); }
   .worker-head .name { font-weight: 600; flex: 1; }
   .dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
   .jobs { padding: 6px 14px 12px; display: flex; flex-direction: column; gap: 8px; }
-  .job { border-left: 3px solid #30363d; padding: 4px 0 4px 10px; }
+  .job { border-left: 3px solid var(--border2); padding: 4px 0 4px 10px; }
   .job .task { white-space: pre-wrap; word-break: break-word; }
   .job .meta { font-size: 12px; }
   .badge { font-size: 11px; padding: 1px 7px; border-radius: 4px; color: #0d1117; font-weight: 700; }
-  .empty { color: #7d8590; font-style: italic; padding: 6px 0; }
+  .empty { color: var(--muted); font-style: italic; padding: 6px 0; }
   .summary-val { font-weight: 700; }
   /* Worker conversation modal */
   .modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,.6); display: none;
     align-items: center; justify-content: center; z-index: 10; }
   .modal-bg.open { display: flex; }
-  .modal { width: min(760px, 92vw); max-height: 84vh; background: #0d1117;
-    border: 1px solid #30363d; border-radius: 10px; display: flex; flex-direction: column; }
-  .modal-head { padding: 12px 16px; border-bottom: 1px solid #21262d; display: flex;
+  .modal { width: min(760px, 92vw); max-height: 84vh; background: var(--bg);
+    border: 1px solid var(--border2); border-radius: 10px; display: flex; flex-direction: column; }
+  .modal-head { padding: 12px 16px; border-bottom: 1px solid var(--border); display: flex;
     align-items: center; gap: 10px; }
   .modal-head .title { font-weight: 600; flex: 1; }
-  .modal-head button { background: none; border: 1px solid #30363d; color: #e6edf3;
+  .modal-head button { background: none; border: 1px solid var(--border2); color: var(--fg);
     border-radius: 6px; padding: 4px 10px; cursor: pointer; font: inherit; }
   .modal-body { overflow-y: auto; padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; }
   .turn { padding: 8px 12px; border-radius: 8px; white-space: pre-wrap; word-break: break-word; }
   .turn.user { background: #1f6feb22; border: 1px solid #1f6feb44; }
-  .turn.assistant { background: #161b22; border: 1px solid #21262d; }
-  .turn .role { font-size: 11px; text-transform: uppercase; color: #7d8590; margin-bottom: 3px; }
+  .turn.assistant { background: var(--panel); border: 1px solid var(--border); }
+  .turn .role { font-size: 11px; text-transform: uppercase; color: var(--muted); margin-bottom: 3px; }
+  /* Responsive: stack chat above workers on narrow screens */
+  @media (max-width: 720px) {
+    .layout { grid-template-columns: 1fr; grid-template-rows: 45vh 1fr; }
+    .chat { border-right: none; border-bottom: 1px solid var(--border); }
+    header { padding: 12px 16px; gap: 10px; }
+    .workers-wrap { padding: 12px 16px; }
+  }
 </style>
 </head>
 <body>
 <header>
   <h1>ben-terminal Hub</h1>
   <div class="summary" id="summary"></div>
+  <span class="pill" id="usage"></span>
   <span class="muted" id="updated"></span>
+  <span class="spacer"></span>
+  <button id="theme" onclick="toggleTheme()">theme</button>
 </header>
 <div class="layout">
   <section class="chat">
@@ -155,6 +185,8 @@ function dashboardHtml(): string {
   <div class="modal">
     <div class="modal-head">
       <span class="title" id="modaltitle">worker</span>
+      <input id="modelinput" placeholder="model override (kosong = default)" style="background:var(--bg);color:var(--fg);border:1px solid var(--border2);border-radius:6px;padding:4px 8px;font:inherit;width:200px" />
+      <button onclick="saveModel()">set model</button>
       <button onclick="abortWorker()" id="abortbtn">stop</button>
       <button onclick="closeWorker()">close</button>
     </div>
@@ -164,6 +196,13 @@ function dashboardHtml(): string {
 <script>
 const STATE_COLORS = ${JSON.stringify(STATE_COLORS)};
 function esc(s){ return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function toggleTheme(){
+  document.body.classList.toggle('light');
+  try { localStorage.setItem('hubTheme', document.body.classList.contains('light') ? 'light' : 'dark'); } catch(e){}
+}
+(function initTheme(){
+  try { if (localStorage.getItem('hubTheme') === 'light') document.body.classList.add('light'); } catch(e){}
+})();
 function healthDot(h){
   const c = h === true ? '#22c55e' : h === false ? '#ef4444' : '#6e7681';
   const t = h === true ? 'healthy' : h === false ? 'down' : 'unknown';
@@ -184,6 +223,12 @@ async function refresh(){
     const d = await res.json();
     document.getElementById('summary').innerHTML = Object.entries(d.summary)
       .map(([k,v]) => '<span class="pill">'+k+' <span class="summary-val">'+v+'</span></span>').join('');
+    if (d.usage) {
+      const tok = d.usage.tokens >= 1e6 ? (d.usage.tokens/1e6).toFixed(1)+'M'
+        : d.usage.tokens >= 1e3 ? (d.usage.tokens/1e3).toFixed(1)+'k' : String(d.usage.tokens);
+      document.getElementById('usage').textContent =
+        tok + ' tokens · $' + (d.usage.cost || 0).toFixed(2);
+    }
     document.getElementById('updated').textContent =
       'updated ' + new Date(d.generatedAt).toLocaleTimeString();
     document.getElementById('workers').innerHTML = d.workers.map(w =>
@@ -249,7 +294,23 @@ async function openWorker(name){
   openWorkerName = name;
   document.getElementById('modaltitle').textContent = name + ' — conversation';
   document.getElementById('modalbg').classList.add('open');
+  // Prefill the model override field from current settings.
+  try {
+    const m = await fetch('/api/models').then(r => r.json());
+    document.getElementById('modelinput').value = (m.models && m.models[name]) || '';
+  } catch(e){ document.getElementById('modelinput').value = ''; }
   await loadWorkerConvo();
+}
+async function saveModel(){
+  if (!openWorkerName) return;
+  const model = document.getElementById('modelinput').value.trim();
+  try {
+    await fetch('/api/models', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ role: openWorkerName, model }),
+    });
+    addMsg('sys', model ? (openWorkerName + ' model -> ' + model) : (openWorkerName + ' model -> default'));
+  } catch(e){ addMsg('sys', 'gagal set model'); }
 }
 function closeWorker(){
   openWorkerName = null;
@@ -337,6 +398,33 @@ export async function startDashboard(deps: DashboardDeps, port: number): Promise
       const replies = deps.drainReplies ? deps.drainReplies() : [];
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify({ replies }));
+      return;
+    }
+    if (req.url === "/api/models" && (!req.method || req.method === "GET")) {
+      const models = deps.getModels ? deps.getModels() : {};
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ models }));
+      return;
+    }
+    if (req.url === "/api/models" && req.method === "POST") {
+      void (async () => {
+        try {
+          const body = (await readJsonBody(req)) as { role?: unknown; model?: unknown };
+          const role = typeof body.role === "string" ? body.role : "";
+          const model = typeof body.model === "string" && body.model.trim() ? body.model.trim() : null;
+          if (!role) {
+            res.writeHead(400, { "content-type": "application/json" });
+            res.end(JSON.stringify({ error: "role is required" }));
+            return;
+          }
+          deps.setModel?.(role, model);
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(JSON.stringify({ ok: true, role, model }));
+        } catch (err) {
+          res.writeHead(500, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: err instanceof Error ? err.message : "internal error" }));
+        }
+      })();
       return;
     }
     if (req.url?.startsWith("/api/worker/") && req.url.endsWith("/abort") && req.method === "POST") {

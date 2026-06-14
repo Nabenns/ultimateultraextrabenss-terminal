@@ -118,4 +118,36 @@ describe("dashboard HTTP server", () => {
       stop();
     }
   });
+
+  it("POST /api/models sets a role model override", async () => {
+    const setModel = vi.fn();
+    const stop = await startDashboard({ ...baseDeps(), setModel }, 4192);
+    try {
+      const res = await fetch("http://127.0.0.1:4192/api/models", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ role: "backend", model: "anthropic/claude-x" }),
+      });
+      const data = (await res.json()) as { ok: boolean };
+      expect(setModel).toHaveBeenCalledWith("backend", "anthropic/claude-x");
+      expect(data.ok).toBe(true);
+    } finally {
+      stop();
+    }
+  });
+
+  it("POST /api/models with empty model clears the override (null)", async () => {
+    const setModel = vi.fn();
+    const stop = await startDashboard({ ...baseDeps(), setModel }, 4191);
+    try {
+      await fetch("http://127.0.0.1:4191/api/models", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ role: "backend", model: "  " }),
+      });
+      expect(setModel).toHaveBeenCalledWith("backend", null);
+    } finally {
+      stop();
+    }
+  });
 });

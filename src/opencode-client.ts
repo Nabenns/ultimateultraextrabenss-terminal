@@ -99,6 +99,20 @@ export class OpencodeClient {
   }
 
   /**
+   * Best-effort: sum token usage and cost across a session's assistant messages.
+   * Returns zeros on error/unexpected shape (never throws).
+   */
+  async sessionUsage(sessionID: string): Promise<UsageTotals> {
+    try {
+      const res = await this.get(`/session/${sessionID}/message`);
+      const messages = (await res.json()) as unknown;
+      return sumUsage(messages);
+    } catch {
+      return { tokens: 0, cost: 0 };
+    }
+  }
+
+  /**
    * Best-effort: returns the full conversation (user/assistant turns with their
    * concatenated text) for a session, or [] on error/unexpected shape.
    */
@@ -111,6 +125,25 @@ export class OpencodeClient {
       return [];
     }
   }
+}
+
+export interface UsageTotals {
+  tokens: number;
+  cost: number;
+}
+
+/** Sum tokens.total + cost across an opencode /message payload. */
+export function sumUsage(messages: unknown): UsageTotals {
+  if (!Array.isArray(messages)) return { tokens: 0, cost: 0 };
+  let tokens = 0;
+  let cost = 0;
+  for (const entry of messages) {
+    const info = (entry as { info?: { tokens?: { total?: number }; cost?: number } }).info;
+    if (!info) continue;
+    if (typeof info.tokens?.total === "number") tokens += info.tokens.total;
+    if (typeof info.cost === "number") cost += info.cost;
+  }
+  return { tokens, cost };
 }
 
 export interface ConversationTurn {
