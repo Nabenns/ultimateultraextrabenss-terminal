@@ -160,4 +160,28 @@ describe("dashboard HTTP server", () => {
       stop();
     }
   });
+
+  it("POST /api/workers/killall routes to onKillAll", async () => {
+    const onKillAll = vi.fn();
+    const stop = await startDashboard({ ...baseDeps(), onKillAll }, 4189);
+    try {
+      const res = await fetch("http://127.0.0.1:4189/api/workers/killall", { method: "POST" });
+      expect((await res.json()).ok).toBe(true);
+      expect(onKillAll).toHaveBeenCalledTimes(1);
+    } finally {
+      stop();
+    }
+  });
+
+  it("POST /api/workers/cancelall routes to onCancelAll", async () => {
+    const onCancelAll = vi.fn(async () => {});
+    const stop = await startDashboard({ ...baseDeps(), onCancelAll }, 4188);
+    try {
+      const res = await fetch("http://127.0.0.1:4188/api/workers/cancelall", { method: "POST" });
+      expect((await res.json()).ok).toBe(true);
+      expect(onCancelAll).toHaveBeenCalledTimes(1);
+    } finally {
+      stop();
+    }
+  });
 });

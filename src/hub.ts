@@ -134,6 +134,16 @@ export async function main(): Promise<void> {
         else modelByRole.delete(role);
       },
       onKillAll: () => manager.killAll(),
+      onCancelAll: async () => {
+        // Abort the active session of every running job.
+        const running = board.getAll().filter((j) => j.state === "running" && j.sessionID);
+        await Promise.all(
+          running.map(async (j) => {
+            const client = clients.get(j.role);
+            if (client && j.sessionID) await client.abort(j.sessionID).catch(() => {});
+          }),
+        );
+      },
       onChat: (message) => orchestratorAI.handle(message),
       drainReplies: () => autoReplies.splice(0, autoReplies.length),
       getConversation: async (name) => {

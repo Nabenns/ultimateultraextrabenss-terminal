@@ -50,6 +50,8 @@ export interface DashboardDeps {
   setModel?: (role: string, model: string | null) => void;
   /** Kills all worker servers (cleanup). Optional. */
   onKillAll?: () => void;
+  /** Aborts all running jobs (stop work without killing servers). Optional. */
+  onCancelAll?: () => Promise<void>;
 }
 
 /** Build the JSON snapshot the dashboard renders. Pure + directly testable. */
@@ -105,8 +107,9 @@ export function dashboardHtml(): string {
   .pill { padding: 2px 10px; border-radius: 999px; background: var(--panel); border: 1px solid var(--border); }
   .muted { color: var(--muted); }
   .spacer { flex: 1; }
-  #theme { background: none; border: 1px solid var(--border2); color: var(--fg);
+  #theme, #cancelall { background: none; border: 1px solid var(--border2); color: var(--fg);
     border-radius: 6px; padding: 3px 10px; cursor: pointer; font: inherit; }
+  #cancelall { border-color: #ef4444; color: #ef4444; }
   .layout { flex: 1; display: grid; grid-template-columns: 380px 1fr; min-height: 0; }
   /* Chat panel */
   .chat { border-right: 1px solid var(--border); display: flex; flex-direction: column; min-height: 0; }
@@ -173,6 +176,7 @@ export function dashboardHtml(): string {
   <span class="pill" id="usage"></span>
   <span class="muted" id="updated"></span>
   <span class="spacer"></span>
+  <button id="cancelall" onclick="cancelAll()">stop all</button>
   <button id="theme" onclick="toggleTheme()">theme</button>
 </header>
 <div class="layout">
@@ -260,6 +264,7 @@ async function refresh(){
     }
     document.getElementById('updated').textContent =
       'updated ' + new Date(d.generatedAt).toLocaleTimeString();
+    notifyOnBatchDone(d.summary);
     document.getElementById('workers').innerHTML = d.workers.map(w =>
       '<div class="worker" data-worker="'+esc(w.name)+'"><div class="worker-head">'+healthDot(w.healthy)
       + '<span class="name">'+esc(w.name)+'</span>'
@@ -392,6 +397,30 @@ document.getElementById('workers').addEventListener('click', (e) => {
   const card = e.target.closest('.worker');
   if (card && card.dataset.worker) openWorker(card.dataset.worker);
 });
+// Notify when a batch of work finishes (running goes from >0 back to 0).
+let prevRunning = 0;
+const baseTitle = document.title;
+function notifyOnBatchDone(summary){
+  const running = (summary && summary.running) || 0;
+  if (prevRunning > 0 && running === 0) {
+    document.title = '✅ selesai · ' + baseTitle;
+    try {
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const o = ctx.createOscillator(); const g = ctx.createGain();
+      o.connect(g); g.connect(ctx.destination);
+      o.frequency.value = 880; g.gain.value = 0.05;
+      o.start(); o.stop(ctx.currentTime + 0.15);
+    } catch(e){}
+    setTimeout(() => { document.title = baseTitle; }, 8000);
+  }
+  prevRunning = running;
+}
+async function cancelAll(){
+  if (!confirm('Hentikan semua pekerjaan yang sedang berjalan?')) return;
+  try { await fetch('/api/workers/cancelall', { method: 'POST' }); addMsg('sys', 'semua pekerjaan dihentikan'); }
+  catch(e){ addMsg('sys', 'gagal menghentikan'); }
+  refresh();
+}
 refresh();
 setInterval(refresh, 2000);
 setInterval(pollReplies, 2500);
@@ -445,6 +474,14 @@ export async function startDashboard(deps: DashboardDeps, port: number): Promise
       deps.onKillAll?.();
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify({ ok: true }));
+      return;
+    }
+    if (req.url === "/api/workers/cancelall" && req.method === "POST") {
+      void (async () => {
+        if (deps.onCancelAll) await deps.onCancelAll().catch(() => {});
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ ok: true }));
+      })();
       return;
     }
     if (req.url === "/api/models" && (!req.method || req.method === "GET")) {

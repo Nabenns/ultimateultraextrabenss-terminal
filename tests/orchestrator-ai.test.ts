@@ -184,6 +184,62 @@ describe("OrchestratorAI auto-correction loop", () => {
     await ai.notifyJobSettled("unknown_job");
     expect(llm.chat).not.toHaveBeenCalled();
   });
+
+  it("stops auto-correcting after MAX_AUTO_ROUNDS to avoid an unbounded loop", async () => {
+    // LLM always dispatches one more job, which would loop forever unbounded.
+    const jobs: Record<string, { role: string; state: string; summary: string | null }> = {};
+    let n = 0;
+    const orchestrator = {
+      dispatch: vi.fn(async (a: { role: string; task: string }[]) =>
+        a.map((x) => {
+          const id = `j${n++}`;
+          jobs[id] = { role: x.role, state: "running", summary: null };
+          return { id, role: x.role };
+        }),
+      ),
+    };
+    const board = jobBoard(jobs);
+    const llm = {
+      chat: vi.fn(async () => '{"reply":"keep going","assignments":[{"role":"backend","task":"more"}]}'),
+    };
+    const ai = new OrchestratorAI(llm as never, orchestrator as never, board as never, ["backend"]);
+
+    await ai.handle("start");
+    // Repeatedly settle the latest pending job to drive autonomous rounds.
+    for (let i = 0; i < 20; i++) {
+      const running = Object.keys(jobs).find((id) => jobs[id]!.state === "running");
+      if (!running) break;
+      jobs[running]!.state = "done";
+      await ai.notifyJobSettled(running);
+    }
+    // Bounded: far fewer LLM calls than the 20 settle attempts would imply.
+    expect(llm.chat.mock.calls.length).toBeLessThanOrEqual(7);
+  });
+
+  it("includes a failure note when a job failed", async () => {
+    const jobs: Record<string, { role: string; state: string; summary: string | null }> = {};
+    const orchestrator = {
+      dispatch: vi.fn(async (a: { role: string; task: string }[]) =>
+        a.map((x) => {
+          jobs["j0"] = { role: x.role, state: "running", summary: null };
+          return { id: "j0", role: x.role };
+        }),
+      ),
+    };
+    const board = jobBoard(jobs);
+    const llm = {
+      chat: vi
+        .fn()
+        .mockResolvedValueOnce('{"reply":"go","assignments":[{"role":"backend","task":"x"}]}')
+        .mockResolvedValueOnce('{"reply":"noted the failure","assignments":[]}'),
+    };
+    const ai = new OrchestratorAI(llm as never, orchestrator as never, board as never, ["backend"]);
+    await ai.handle("do it");
+    jobs["j0"]!.state = "failed";
+    await ai.notifyJobSettled("j0");
+    const secondMessages = (llm.chat.mock.calls[1]?.[0] ?? []) as { role: string; content: string }[];
+    expect(JSON.stringify(secondMessages)).toContain("FAILED");
+  });
 });
 
 describe("OrchestratorAI history persistence", () => {

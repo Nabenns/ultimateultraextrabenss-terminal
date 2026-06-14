@@ -62,6 +62,9 @@ function extractJson(raw: string): { reply?: unknown; assignments?: unknown[] } 
 /** Max number of recent history messages sent to the LLM per turn. */
 const HISTORY_WINDOW = 12;
 
+/** Max consecutive autonomous correction rounds before pausing for the user. */
+const MAX_AUTO_ROUNDS = 5;
+
 const SYSTEM_PROMPT = (roles: string[]) => `You are the Orchestrator for a team of AI worker agents, each a separate opencode process with a fixed role. Your job is to read the user's request and decide which role(s) should handle it, then assign each a concrete task. You do NOT do the work yourself — you route and coordinate.
 
 Available roles (deliberation, execution, support):
@@ -70,8 +73,15 @@ ${roles.map((r) => `- ${r}`).join("\n")}
 Guidance:
 - Pick the role(s) that genuinely fit the request. A code change might go to backend/frontend; a "should we do X?" might go to visionary + skeptic + decider; understanding the codebase goes to researcher first.
 - You may assign multiple roles in one turn when they can work in parallel.
+- DEFAULT TO DISPATCHING. If the request describes any actionable work, emit assignments — do not just acknowledge it in prose. Only return empty assignments when you genuinely cannot proceed without more information.
 - If the request is unclear or you need info before dispatching, ask the user instead of assigning — return an empty assignments list.
-- Keep each task self-contained and specific; the worker only sees the task text.
+- Keep each task self-contained and specific; the worker only sees the task text (it does NOT see this conversation).
+
+Examples:
+- User: "pelajari project di C:/foo" -> {"reply":"Saya kerahkan researcher untuk memetakan project.","assignments":[{"role":"researcher","task":"Pelajari project di C:/foo READ-ONLY: struktur folder, stack, entry point, alur. Ringkas terstruktur."}]}
+- User: "tambah endpoint login" -> {"reply":"Backend mengerjakan endpoint login.","assignments":[{"role":"backend","task":"Tambahkan endpoint POST /login dengan validasi input. Ikuti pola project yang ada."}]}
+- User: "haruskah kita pakai GraphQL?" -> {"reply":"Saya gelar diskusi.","assignments":[{"role":"visionary","task":"Argumen untuk pindah ke GraphQL."},{"role":"skeptic","task":"Risiko dan biaya pindah ke GraphQL."},{"role":"decider","task":"Putuskan GraphQL atau tidak berdasarkan argumen kedua sisi."}]}
+- User: "tolong dong" (ambiguous) -> {"reply":"Boleh perjelas tugasnya? Misal: review project, tambah fitur, atau riset sesuatu.","assignments":[]}
 
 Respond with ONLY a JSON object (optionally in a \`\`\`json fence) of this exact shape:
 {"reply": "<short message shown to the user>", "assignments": [{"role": "<role>", "task": "<task>"}]}
@@ -86,6 +96,8 @@ export class OrchestratorAI {
   private history: ChatMessage[] = [];
   /** Job IDs dispatched in the current round, still awaiting completion. */
   private pendingJobs = new Set<string>();
+  /** Consecutive autonomous correction rounds since the last user message. */
+  private autoRounds = 0;
 
   constructor(
     private readonly llm: Pick<LlmClient, "chat">,
@@ -109,6 +121,7 @@ export class OrchestratorAI {
 
   /** Handle a user message: ask the LLM, dispatch, and return the reply. */
   async handle(userMessage: string): Promise<string> {
+    this.autoRounds = 0; // a fresh user message resets the autonomous-round budget
     this.pushHistory({ role: "user", content: userMessage });
     return this.think();
   }
@@ -117,16 +130,31 @@ export class OrchestratorAI {
    * Called by the Hub when a job finishes. When ALL jobs dispatched in the
    * current round have settled, the AI re-engages with their results to decide
    * whether to continue, correct, or report — without the user typing again.
+   * Bounded by MAX_AUTO_ROUNDS so a misbehaving loop can't burn tokens forever.
    */
   async notifyJobSettled(jobId: string): Promise<void> {
     if (!this.pendingJobs.has(jobId)) return;
     this.pendingJobs.delete(jobId);
     if (this.pendingJobs.size > 0) return; // wait for the rest of the round
 
+    if (this.autoRounds >= MAX_AUTO_ROUNDS) {
+      const msg =
+        "Auto-correction paused after several autonomous rounds to avoid an unbounded loop. Send a new message to continue.";
+      this.pushHistory({ role: "assistant", content: msg });
+      this.options.onReply?.(msg);
+      this.autoRounds = 0;
+      return;
+    }
+    this.autoRounds++;
+
     const results = this.collectResults();
+    const anyFailed = this.board.getAll().some((j) => j.state === "failed");
+    const failNote = anyFailed
+      ? " Some jobs FAILED — decide whether to retry with a corrected task, route to another role, or report the failure to the user."
+      : "";
     this.pushHistory({
       role: "user",
-      content: `[system] All dispatched workers have finished. Results:\n${results}\n\nReview the results. If the goal is met, report back to the user. If more work or correction is needed, dispatch follow-up assignments.`,
+      content: `[system] All dispatched workers have finished. Results:\n${results}\n\nReview the results. If the goal is met, report back to the user. If more work or correction is needed, dispatch follow-up assignments.${failNote}`,
     });
     const reply = await this.think();
     this.options.onReply?.(reply);
