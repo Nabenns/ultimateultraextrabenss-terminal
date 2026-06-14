@@ -222,13 +222,14 @@ function readJsonBody(req: import("node:http").IncomingMessage): Promise<unknown
 }
 
 /**
- * Starts the dashboard HTTP server on 127.0.0.1:port.
- * Serves the HTML shell at /, a JSON snapshot at /api/status, and accepts chat
- * messages at POST /api/chat (routed through deps.onChat). Returns a shutdown fn.
+ * Starts the dashboard HTTP server on both loopback addresses (127.0.0.1 and
+ * ::1) so `localhost` resolves regardless of whether Windows picks IPv4 or IPv6,
+ * while staying off the network. Serves the HTML shell at /, a JSON snapshot at
+ * /api/status, and accepts chat at POST /api/chat. Returns a shutdown fn.
  */
 export async function startDashboard(deps: DashboardDeps, port: number): Promise<() => void> {
   const html = dashboardHtml();
-  const server: Server = createServer((req, res) => {
+  const handler = (req: import("node:http").IncomingMessage, res: import("node:http").ServerResponse): void => {
     if (req.url === "/api/status") {
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify(buildSnapshot(deps)));
@@ -261,14 +262,28 @@ export async function startDashboard(deps: DashboardDeps, port: number): Promise
     }
     res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
     res.end(html);
-  });
+  };
 
-  await new Promise<void>((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(port, "127.0.0.1", resolve);
+  // Bind IPv4 loopback (required) then IPv6 loopback (best-effort), so
+  // `localhost` works whether Windows resolves it to 127.0.0.1 or ::1, while
+  // never exposing the server beyond loopback.
+  const servers: Server[] = [];
+  const listen = (host: string): Promise<void> =>
+    new Promise<void>((resolve, reject) => {
+      const server = createServer(handler);
+      server.once("error", reject);
+      server.listen(port, host, () => {
+        servers.push(server);
+        resolve();
+      });
+    });
+
+  await listen("127.0.0.1"); // required — throws if the port is taken
+  await listen("::1").catch(() => {
+    // IPv6 loopback may be unavailable; IPv4 alone is acceptable.
   });
 
   return () => {
-    server.close();
+    for (const server of servers) server.close();
   };
 }

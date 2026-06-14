@@ -1,5 +1,6 @@
 import { appendFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
+import { spawn } from "node:child_process";
 import { loadConfig, HUB_PORT } from "./config.js";
 import { OpencodeClient } from "./opencode-client.js";
 import { StatusBoard } from "./status-board.js";
@@ -111,6 +112,7 @@ export async function main(): Promise<void> {
     HUB_PORT,
   );
   console.log(`Hub dashboard (chat + status) at http://127.0.0.1:${HUB_PORT}`);
+  openBrowser(`http://127.0.0.1:${HUB_PORT}`);
 
   process.on("SIGINT", () => {
     clearInterval(healthTimer);
@@ -120,6 +122,23 @@ export async function main(): Promise<void> {
   });
 
   process.on("unhandledRejection", (reason) => console.error("unhandledRejection:", reason));
+}
+
+/** Open the default browser at `url` (best-effort; never throws). */
+function openBrowser(url: string): void {
+  try {
+    const platform = process.platform;
+    if (platform === "win32") {
+      // `start` is a cmd builtin; the empty "" is the window-title arg.
+      spawn("cmd", ["/c", "start", "", url], { detached: true, stdio: "ignore" }).unref();
+    } else if (platform === "darwin") {
+      spawn("open", [url], { detached: true, stdio: "ignore" }).unref();
+    } else {
+      spawn("xdg-open", [url], { detached: true, stdio: "ignore" }).unref();
+    }
+  } catch {
+    // Non-fatal: user can open the URL manually.
+  }
 }
 
 interface HealthClient {
