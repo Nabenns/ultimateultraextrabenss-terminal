@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
+import type { SpawnOptions } from "node:child_process";
 import { buildWtArgs, WorkerManager } from "../src/worker-manager.js";
 import type { WorkerSpec } from "../src/types.js";
 
@@ -15,9 +16,9 @@ describe("buildWtArgs", () => {
   it("builds a new-tab command running opencode serve on the right port", () => {
     const args = buildWtArgs(spec);
     const joined = args.join(" ");
-    expect(joined).toContain("new-tab");
+    expect(args[0]).toBe("new-tab");
     expect(joined).toContain("--title");
-    expect(joined).toContain("frontend");
+    expect(args[args.indexOf("--title") + 1]).toBe("frontend");
     expect(joined).toContain("opencode serve --port 4106");
   });
 
@@ -29,18 +30,34 @@ describe("buildWtArgs", () => {
   it("includes a split-pane attach when attach is true", () => {
     const args = buildWtArgs(spec);
     expect(args.join(" ")).toContain("split-pane");
-    expect(args.join(" ")).toContain("opencode attach http://localhost:4106");
+    expect(args.join(" ")).toContain("opencode attach http://127.0.0.1:4106");
+  });
+
+  it("chains attach pane with a standalone ; delimiter", () => {
+    const withAttach = buildWtArgs(spec);
+    expect(withAttach.includes(";")).toBe(true);
+    const withoutAttach = buildWtArgs({ ...spec, attach: false });
+    expect(withoutAttach.includes(";")).toBe(false);
   });
 });
 
 describe("WorkerManager.spawnAll", () => {
   it("spawns one wt process per worker", async () => {
     const spawnFn = vi.fn(
-      (_cmd: string, _args: string[], _opts: object) => ({ pid: 999 }),
+      (_cmd: string, _args: string[], _opts: SpawnOptions) => ({ pid: 999 }),
     );
     const mgr = new WorkerManager([spec], spawnFn);
     mgr.spawnAll();
     expect(spawnFn).toHaveBeenCalledTimes(1);
     expect(spawnFn.mock.calls[0]![0]).toBe("wt.exe");
+  });
+
+  it("records the spawned pid retrievable via pidOf", async () => {
+    const spawnFn = vi.fn(
+      (_cmd: string, _args: string[], _opts: SpawnOptions) => ({ pid: 999 }),
+    );
+    const mgr = new WorkerManager([spec], spawnFn);
+    mgr.spawnAll();
+    expect(mgr.pidOf("frontend")).toBe(999);
   });
 });
