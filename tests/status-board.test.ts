@@ -36,4 +36,17 @@ describe("StatusBoard", () => {
     board.update(job.id, { state: "running" });
     expect(writer).toHaveBeenCalledTimes(2);
   });
+
+  it("update throws on unknown job id", () => {
+    const board = new StatusBoard();
+    expect(() => board.update("nope", { state: "done" })).toThrow(/unknown job/i);
+  });
+
+  it("findBySession returns the job matching a sessionID", () => {
+    const board = new StatusBoard();
+    const job = board.addJob("frontend", "build login form");
+    board.update(job.id, { sessionID: "ses_42" });
+    expect(board.findBySession("ses_42")).toBe(board.get(job.id));
+    expect(board.findBySession("missing")).toBeUndefined();
+  });
 });

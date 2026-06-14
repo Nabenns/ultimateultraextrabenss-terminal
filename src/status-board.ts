@@ -26,6 +26,7 @@ export class StatusBoard {
     return job;
   }
 
+  /** The only sanctioned mutation path — mutating a Job returned by get()/getAll() bypasses logging and lastUpdate. */
   update(id: string, patch: Partial<Omit<Job, "id">>): void {
     const job = this.jobs.get(id);
     if (!job) throw new Error(`unknown job: ${id}`);
