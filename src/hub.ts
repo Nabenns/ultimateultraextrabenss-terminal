@@ -1,17 +1,16 @@
 import { appendFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
-import { loadConfig, MCP_PORT } from "./config.js";
+import { loadConfig, HUB_PORT } from "./config.js";
 import { OpencodeClient } from "./opencode-client.js";
 import { StatusBoard } from "./status-board.js";
 import { WorkerManager } from "./worker-manager.js";
 import { Orchestrator } from "./orchestrator.js";
-import { MessageBus, type WorkerHandle } from "./bus.js";
 import { listenToWorker, type OpencodeEvent } from "./event-listener.js";
-import { startMcpServer } from "./mcp-server.js";
 import { startDashboard } from "./dashboard.js";
+import { LlmClient, loadModelConfig } from "./llm-client.js";
+import { OrchestratorAI } from "./orchestrator-ai.js";
 import type { WorkerSpec } from "./types.js";
 
-const DASHBOARD_PORT = 4099;
 
 /** SSE→verify bridge: when a worker's session goes idle, verify its job. */
 export async function handleWorkerEvent(
@@ -58,15 +57,16 @@ export async function main(): Promise<void> {
 
   const orchestrator = new Orchestrator(board, clientFor, agentFor);
 
-  // Bus resolver: map a known worker name -> handle that delivers via its
-  // session, creating one if the worker hasn't been dispatched a task yet.
-  // Returns null only for names not in the configured roster.
-  const knownWorkers = new Set(cfg.workers.map((w) => w.name));
-  const resolver = async (name: string): Promise<WorkerHandle | null> => {
-    if (!knownWorkers.has(name)) return null;
-    return orchestrator.ensureSession(name);
-  };
-  const bus = new MessageBus(resolver, cfg.workers.map((w) => w.name));
+  // Router brain: the web chat talks to this. It reads creds from the user's
+  // opencode config (same provider/model as the rest of the toolchain), so no
+  // secrets live in this repo.
+  const llm = new LlmClient(loadModelConfig());
+  const orchestratorAI = new OrchestratorAI(
+    llm,
+    orchestrator,
+    board,
+    cfg.workers.map((w) => w.name),
+  );
 
   // Spawn worker terminals.
   const manager = new WorkerManager(cfg.workers);
@@ -101,19 +101,20 @@ export async function main(): Promise<void> {
     void runHealthCheck(cfg.workers, clients, manager, health);
   }, 15000);
 
-  const stopMcp = await startMcpServer({ board, orchestrator, bus }, MCP_PORT);
-  console.log(`Hub MCP server listening on http://127.0.0.1:${MCP_PORT}/mcp`);
-
   const stopDashboard = await startDashboard(
-    { board, workerNames: cfg.workers.map((w) => w.name), health },
-    DASHBOARD_PORT,
+    {
+      board,
+      workerNames: cfg.workers.map((w) => w.name),
+      health,
+      onChat: (message) => orchestratorAI.handle(message),
+    },
+    HUB_PORT,
   );
-  console.log(`Hub dashboard at http://127.0.0.1:${DASHBOARD_PORT}`);
+  console.log(`Hub dashboard (chat + status) at http://127.0.0.1:${HUB_PORT}`);
 
   process.on("SIGINT", () => {
     clearInterval(healthTimer);
     for (const stop of stopListeners) stop();
-    stopMcp();
     stopDashboard();
     process.exit(0);
   });

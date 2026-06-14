@@ -37,11 +37,11 @@ describe("parseConfig", () => {
     expect(() => parseConfig(raw)).toThrow(/duplicate name/i);
   });
 
-  it("rejects a worker using the reserved Hub MCP port 4100", () => {
+  it("rejects a worker using the reserved Hub port 4099", () => {
     const raw = {
-      workers: [{ name: "frontend", port: 4100, cwd: "." }],
+      workers: [{ name: "frontend", port: 4099, cwd: "." }],
     };
-    expect(() => parseConfig(raw)).toThrow(/reserved Hub MCP port 4100/i);
+    expect(() => parseConfig(raw)).toThrow(/reserved Hub port 4099/i);
   });
 });
 

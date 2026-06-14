@@ -19,8 +19,8 @@ export interface HubConfig {
   workers: WorkerSpec[];
 }
 
-/** Port the Hub's own MCP server binds to; workers must not reuse it. */
-export const MCP_PORT = 4100;
+/** Port the Hub's own dashboard/web server binds to; workers must not reuse it. */
+export const HUB_PORT = 4099;
 
 export function parseConfig(raw: unknown): HubConfig {
   const parsed = ConfigSchema.parse(raw);
@@ -30,8 +30,8 @@ export function parseConfig(raw: unknown): HubConfig {
   for (const w of parsed.workers) {
     if (names.has(w.name)) throw new Error(`duplicate name: ${w.name}`);
     if (ports.has(w.port)) throw new Error(`duplicate port: ${w.port}`);
-    if (w.port === MCP_PORT) {
-      throw new Error(`worker ${w.name} uses reserved Hub MCP port ${MCP_PORT}`);
+    if (w.port === HUB_PORT) {
+      throw new Error(`worker ${w.name} uses reserved Hub port ${HUB_PORT}`);
     }
     names.add(w.name);
     ports.add(w.port);
