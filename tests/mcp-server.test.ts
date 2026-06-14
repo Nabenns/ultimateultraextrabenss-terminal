@@ -41,4 +41,21 @@ describe("MCP tool handlers", () => {
     await handlers.send_message({ from: "orchestrator", to: "backend", text: "go" });
     expect(bus.send).toHaveBeenCalledTimes(1);
   });
+
+  it("get_results returns only the matching job when jobId is given", async () => {
+    const { board, orchestrator, bus } = deps();
+    const j = board.addJob("frontend", "x");
+    board.addJob("backend", "y");
+    const handlers = createToolHandlers({ board, orchestrator: orchestrator as never, bus: bus as never });
+    const res = await handlers.get_results({ jobId: j.id });
+    expect(res.jobs).toHaveLength(1);
+    expect(res.jobs[0]!.id).toBe(j.id);
+  });
+
+  it("get_results returns an empty array for an unknown jobId", async () => {
+    const { board, orchestrator, bus } = deps();
+    const handlers = createToolHandlers({ board, orchestrator: orchestrator as never, bus: bus as never });
+    const res = await handlers.get_results({ jobId: "nope" });
+    expect(res.jobs).toEqual([]);
+  });
 });

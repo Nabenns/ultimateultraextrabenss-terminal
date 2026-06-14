@@ -51,6 +51,8 @@ export async function startMcpServer(deps: McpDeps, port: number): Promise<() =>
   const handlers = createToolHandlers(deps);
   const server = new McpServer({ name: "ben-terminal-hub", version: "0.1.0" });
 
+  // Handler errors intentionally propagate; McpServer.registerTool converts a
+  // thrown error into an isError tool result so Hermes sees the failure.
   const asText = (result: unknown) => ({
     content: [{ type: "text" as const, text: JSON.stringify(result) }],
   });
@@ -105,7 +107,10 @@ export async function startMcpServer(deps: McpDeps, port: number): Promise<() =>
   const http = createServer((req, res) => {
     void transport.handleRequest(req, res);
   });
-  http.listen(port, "127.0.0.1");
+  await new Promise<void>((resolve, reject) => {
+    http.once("error", reject);
+    http.listen(port, "127.0.0.1", resolve);
+  });
 
   return () => {
     http.close();
