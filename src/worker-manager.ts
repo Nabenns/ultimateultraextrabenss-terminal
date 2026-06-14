@@ -8,8 +8,20 @@ export type SpawnFn = (cmd: string, args: string[], opts: SpawnOptions) => { pid
  * opencode server, plus an optional split pane attaching a visible TUI.
  */
 // agent/model are per-session settings applied by the Hub when it creates sessions against the running server, not server-launch flags.
+
+// Headless workers have no TUI to approve permission prompts, so an inherited
+// "bash"/"edit": "ask" would hang the worker forever the moment it runs a tool.
+// We inject a worker-only config (via OPENCODE_CONFIG_CONTENT, merged last) that
+// auto-allows actions — without touching the user's global opencode config.
+// JSON contains no single quotes, so it is safe inside a PowerShell '...' literal.
+const WORKER_PERMISSION_CONFIG = JSON.stringify({
+  $schema: "https://opencode.ai/config.json",
+  permission: { bash: "allow", edit: "allow", webfetch: "allow" },
+});
+
 export function buildWtArgs(spec: WorkerSpec): string[] {
-  const serveCmd = `opencode serve --port ${spec.port} --hostname 127.0.0.1`;
+  const env = `$env:OPENCODE_CONFIG_CONTENT='${WORKER_PERMISSION_CONFIG}'; `;
+  const serveCmd = `${env}opencode serve --port ${spec.port} --hostname 127.0.0.1`;
   const args = [
     "new-tab",
     "--title",

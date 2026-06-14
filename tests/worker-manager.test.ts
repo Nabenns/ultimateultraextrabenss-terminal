@@ -22,6 +22,16 @@ describe("buildWtArgs", () => {
     expect(joined).toContain("opencode serve --port 4106");
   });
 
+  it("injects a worker permission config so headless workers don't hang on approval", () => {
+    const joined = buildWtArgs(spec).join(" ");
+    // env var set before serve, with bash auto-allowed
+    expect(joined).toContain("OPENCODE_CONFIG_CONTENT");
+    expect(joined).toContain('"bash":"allow"');
+    // the env assignment precedes the serve command
+    const cmd = buildWtArgs(spec).find((a) => a.includes("opencode serve"))!;
+    expect(cmd.indexOf("OPENCODE_CONFIG_CONTENT")).toBeLessThan(cmd.indexOf("opencode serve"));
+  });
+
   it("omits attach pane when attach is false", () => {
     const args = buildWtArgs({ ...spec, attach: false });
     expect(args.join(" ")).not.toContain("split-pane");
