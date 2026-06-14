@@ -49,4 +49,14 @@ describe("StatusBoard", () => {
     expect(board.findBySession("ses_42")).toBe(board.get(job.id));
     expect(board.findBySession("missing")).toBeUndefined();
   });
+
+  it("findLatestBySession returns the most-recently-updated job sharing a sessionID", () => {
+    const board = new StatusBoard();
+    const a = board.addJob("frontend", "a");
+    board.update(a.id, { sessionID: "ses_shared" });
+    const b = board.addJob("frontend", "b");
+    board.update(b.id, { sessionID: "ses_shared" });
+    expect(board.findLatestBySession("ses_shared")).toBe(board.get(b.id));
+    expect(board.findLatestBySession("missing")).toBeUndefined();
+  });
 });

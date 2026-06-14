@@ -16,14 +16,20 @@ const MCP_PORT = 4100;
 export async function handleWorkerEvent(
   board: StatusBoard,
   orchestrator: Pick<Orchestrator, "verify">,
-  _workerName: string,
+  workerName: string,
   event: OpencodeEvent,
 ): Promise<void> {
-  if (event.type !== "session.idle") return;
-  const sessionID = event.properties.sessionID;
-  if (!sessionID) return;
-  const job = board.findBySession(sessionID);
-  if (job) await orchestrator.verify(job.id);
+  try {
+    if (event.type !== "session.idle") return;
+    const sessionID = event.properties.sessionID;
+    if (!sessionID) return;
+    const job = board.findLatestBySession(sessionID);
+    if (job) await orchestrator.verify(job.id);
+  } catch (err) {
+    // Best-effort: never reject so the SSE listener's fire-and-forget call
+    // (void handleWorkerEvent) can't become an unhandled rejection.
+    console.error(`handleWorkerEvent failed for worker ${workerName}:`, err);
+  }
 }
 
 export async function main(): Promise<void> {
@@ -77,6 +83,8 @@ export async function main(): Promise<void> {
     stopMcp();
     process.exit(0);
   });
+
+  process.on("unhandledRejection", (reason) => console.error("unhandledRejection:", reason));
 }
 
 async function waitForWorkers(

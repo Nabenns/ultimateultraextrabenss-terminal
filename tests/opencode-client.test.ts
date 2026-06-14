@@ -63,4 +63,21 @@ describe("OpencodeClient", () => {
     const client = new OpencodeClient("http://localhost:4106", fetchFn);
     await expect(client.createSession("frontend session")).rejects.toThrow();
   });
+
+  it("lastAssistantText returns the text of the last assistant message", async () => {
+    const fetchFn = mockFetch({
+      "/message": [
+        { info: { role: "user" }, parts: [{ type: "text", text: "hi" }] },
+        { info: { role: "assistant" }, parts: [{ type: "text", text: "done building" }] },
+      ],
+    });
+    const client = new OpencodeClient("http://localhost:4106", fetchFn);
+    expect(await client.lastAssistantText("ses_123")).toBe("done building");
+  });
+
+  it("lastAssistantText returns null on malformed/empty response", async () => {
+    const fetchFn = mockFetch({ "/message": {} });
+    const client = new OpencodeClient("http://localhost:4106", fetchFn);
+    expect(await client.lastAssistantText("ses_123")).toBeNull();
+  });
 });

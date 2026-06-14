@@ -46,6 +46,16 @@ export class StatusBoard {
     return this.getAll().find((j) => j.sessionID === sessionID);
   }
 
+  /** Returns the most-recently-updated job sharing a sessionID (the active job on a shared session). */
+  findLatestBySession(sessionID: string): Job | undefined {
+    let latest: Job | undefined;
+    for (const j of this.jobs.values()) {
+      if (j.sessionID !== sessionID) continue;
+      if (!latest || j.lastUpdate >= latest.lastUpdate) latest = j;
+    }
+    return latest;
+  }
+
   summary(): Record<JobState, number> {
     const counts: Record<JobState, number> = { queued: 0, running: 0, done: 0, failed: 0 };
     for (const j of this.jobs.values()) counts[j.state]++;

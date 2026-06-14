@@ -9,6 +9,7 @@ function fakeClient() {
     remainingTodos: vi.fn(async () => [] as string[]),
     abort: vi.fn(async () => {}),
     isHealthy: vi.fn(async () => true),
+    lastAssistantText: vi.fn(async () => null as string | null),
   };
 }
 
@@ -41,10 +42,24 @@ describe("Orchestrator", () => {
   it("verifies a job: done when no todos remain", async () => {
     const board = new StatusBoard();
     const client = fakeClient();
+    client.lastAssistantText = vi.fn(async () => "built the form");
     const orch = new Orchestrator(board, () => client as never);
     const [job] = await orch.dispatch([{ role: "frontend", task: "a" }]);
     await orch.verify(job!.id);
-    expect(board.get(job!.id)!.state).toBe("done");
+    const got = board.get(job!.id)!;
+    expect(got.state).toBe("done");
+    expect(got.summary).toBe("built the form");
+  });
+
+  it("second dispatch to a role supersedes the prior running job", async () => {
+    const board = new StatusBoard();
+    const client = fakeClient();
+    const orch = new Orchestrator(board, () => client as never);
+    const [first] = await orch.dispatch([{ role: "frontend", task: "a" }]);
+    const [second] = await orch.dispatch([{ role: "frontend", task: "b" }]);
+    expect(board.get(first!.id)!.state).toBe("done");
+    expect(board.get(second!.id)!.state).toBe("running");
+    expect(board.get(first!.id)!.sessionID).toBe(board.get(second!.id)!.sessionID);
   });
 
   it("verifies a job: stays running when todos remain", async () => {

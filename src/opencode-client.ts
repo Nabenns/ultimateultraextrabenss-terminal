@@ -64,6 +64,36 @@ export class OpencodeClient {
     return todos.filter((t) => t.status !== "completed").map((t) => t.content);
   }
 
+  /**
+   * Best-effort: returns concatenated text of the last assistant message's
+   * text-parts, or null if none / shape is unexpected. Never throws on a
+   * malformed payload — used only for summary enrichment.
+   */
+  async lastAssistantText(sessionID: string): Promise<string | null> {
+    try {
+      const res = await this.get(`/session/${sessionID}/message`);
+      const messages = (await res.json()) as unknown;
+      if (!Array.isArray(messages)) return null;
+      for (let i = messages.length - 1; i >= 0; i--) {
+        const entry = messages[i] as { info?: { role?: string }; parts?: unknown };
+        if (entry?.info?.role !== "assistant") continue;
+        if (!Array.isArray(entry.parts)) return null;
+        const text = entry.parts
+          .filter(
+            (p): p is { type: "text"; text: string } =>
+              !!p && (p as { type?: string }).type === "text" &&
+              typeof (p as { text?: unknown }).text === "string",
+          )
+          .map((p) => p.text)
+          .join("");
+        return text;
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
   async abort(sessionID: string): Promise<void> {
     await this.post(`/session/${sessionID}/abort`);
   }

@@ -13,6 +13,7 @@ export interface WorkerClient {
   remainingTodos(sessionID: string): Promise<string[]>;
   abort(sessionID: string): Promise<void>;
   isHealthy(): Promise<boolean>;
+  lastAssistantText(sessionID: string): Promise<string | null>;
 }
 
 export type ClientFactory = (role: string) => WorkerClient;
@@ -41,6 +42,14 @@ export class Orchestrator {
   async dispatch(assignments: Assignment[]): Promise<Job[]> {
     const jobs: Job[] = [];
     for (const a of assignments) {
+      // On a shared sequential session, a new prompt is only sent after the
+      // prior turn finished — so any prior non-terminal job for this role is
+      // complete. Mark it superseded before adding the new job.
+      for (const old of this.board.getAll()) {
+        if (old.role === a.role && (old.state === "running" || old.state === "queued")) {
+          this.board.update(old.id, { state: "done", summary: "superseded by newer task" });
+        }
+      }
       const job = this.board.addJob(a.role, a.task);
       const { client, sessionID } = await this.sessionFor(a.role);
       // Job is marked running before the prompt is fired. If promptAsync
@@ -60,7 +69,8 @@ export class Orchestrator {
     const client = this.clientFor(job.role);
     const remaining = await client.remainingTodos(job.sessionID);
     if (remaining.length === 0) {
-      this.board.update(jobId, { state: "done", remainingTodos: [] });
+      const summary = await client.lastAssistantText(job.sessionID);
+      this.board.update(jobId, { state: "done", remainingTodos: [], summary });
     } else {
       this.board.update(jobId, { state: "running", remainingTodos: remaining });
     }
