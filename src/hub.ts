@@ -1,4 +1,5 @@
 import { appendFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
 import { loadConfig } from "./config.js";
 import { OpencodeClient } from "./opencode-client.js";
 import { StatusBoard } from "./status-board.js";
@@ -46,6 +47,8 @@ export async function main(): Promise<void> {
   const orchestrator = new Orchestrator(board, clientFor);
 
   // Bus resolver: map worker name -> handle that delivers via its active session.
+  // Relies on one-session-per-role (Orchestrator.sessionFor): all jobs for a role
+  // share one sessionID, so the first role-matching job yields the live session.
   const resolver = (name: string): WorkerHandle | null => {
     const job = board.getAll().find((j) => j.role === name && j.sessionID);
     const client = clients.get(name);
@@ -68,7 +71,7 @@ export async function main(): Promise<void> {
   }
 
   const stopMcp = await startMcpServer({ board, orchestrator, bus }, MCP_PORT);
-  console.log(`Hub MCP server listening on http://localhost:${MCP_PORT}/mcp`);
+  console.log(`Hub MCP server listening on http://127.0.0.1:${MCP_PORT}/mcp`);
 
   process.on("SIGINT", () => {
     stopMcp();
@@ -81,17 +84,19 @@ async function waitForWorkers(
   clients: Map<string, OpencodeClient>,
   timeoutMs = 60000,
 ): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  for (const w of workers) {
-    const client = clients.get(w.name)!;
-    while (Date.now() < deadline) {
-      if (await client.isHealthy()) break;
-      await new Promise((r) => setTimeout(r, 1000));
-    }
-  }
+  await Promise.all(
+    workers.map(async (w) => {
+      const client = clients.get(w.name)!;
+      const deadline = Date.now() + timeoutMs;
+      while (Date.now() < deadline) {
+        if (await client.isHealthy()) return;
+        await new Promise((r) => setTimeout(r, 1000));
+      }
+    }),
+  );
 }
 
 // Entrypoint
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (import.meta.url === pathToFileURL(process.argv[1]!).href) {
   void main();
 }
