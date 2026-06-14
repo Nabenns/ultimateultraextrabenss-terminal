@@ -39,4 +39,28 @@ describe("OpencodeClient", () => {
     const client = new OpencodeClient("http://localhost:4106", fetchFn);
     expect(await client.isHealthy()).toBe(true);
   });
+
+  it("isHealthy returns false when fetch rejects", async () => {
+    const fetchFn = vi.fn(async () => {
+      throw new Error("transport error");
+    });
+    const client = new OpencodeClient("http://localhost:4106", fetchFn);
+    expect(await client.isHealthy()).toBe(false);
+  });
+
+  it("isHealthy returns false on non-ok response", async () => {
+    const fetchFn = vi.fn(
+      async () => ({ ok: false, status: 500, json: async () => ({}) }) as Response,
+    );
+    const client = new OpencodeClient("http://localhost:4106", fetchFn);
+    expect(await client.isHealthy()).toBe(false);
+  });
+
+  it("createSession rejects on non-ok response", async () => {
+    const fetchFn = vi.fn(
+      async () => ({ ok: false, status: 500, json: async () => ({}) }) as Response,
+    );
+    const client = new OpencodeClient("http://localhost:4106", fetchFn);
+    await expect(client.createSession("frontend session")).rejects.toThrow();
+  });
 });
