@@ -1,6 +1,7 @@
 import { createServer, type Server } from "node:http";
 import type { StatusBoard } from "./status-board.js";
 import type { Job } from "./types.js";
+import { officeHtml } from "./office.js";
 
 /** A point-in-time view of the fleet for the dashboard. */
 export interface DashboardSnapshot {
@@ -176,6 +177,7 @@ export function dashboardHtml(): string {
   <span class="pill" id="usage"></span>
   <span class="muted" id="updated"></span>
   <span class="spacer"></span>
+  <a href="/office" style="color:var(--accent);text-decoration:none;font-size:13px;margin-right:6px">office ↗</a>
   <button id="cancelall" onclick="cancelAll()">stop all</button>
   <button id="theme" onclick="toggleTheme()">theme</button>
 </header>
@@ -553,6 +555,11 @@ export async function startDashboard(deps: DashboardDeps, port: number): Promise
           res.end(JSON.stringify({ error: err instanceof Error ? err.message : "internal error" }));
         }
       })();
+      return;
+    }
+    if (req.url === "/office") {
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      res.end(officeHtml());
       return;
     }
     res.writeHead(200, { "content-type": "text/html; charset=utf-8" });

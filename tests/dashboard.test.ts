@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { buildSnapshot, startDashboard, dashboardHtml } from "../src/dashboard.js";
+import { officeHtml } from "../src/office.js";
 import { StatusBoard } from "../src/status-board.js";
 
 describe("buildSnapshot", () => {
@@ -183,5 +184,15 @@ describe("dashboard HTTP server", () => {
     } finally {
       stop();
     }
+  });
+});
+
+describe("office page", () => {
+  it("serves valid client JS for the office canvas", () => {
+    const html = officeHtml();
+    const start = html.indexOf("<script>") + "<script>".length;
+    const end = html.indexOf("</script>");
+    expect(() => new Function(html.slice(start, end))).not.toThrow();
+    expect(html).toContain("ben-terminal Office");
   });
 });
