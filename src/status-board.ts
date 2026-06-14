@@ -22,6 +22,7 @@ export class StatusBoard {
       lastUpdate: Date.now(),
       startedAt: null,
       finishedAt: null,
+      stalled: false,
     };
     this.jobs.set(job.id, job);
     this.write(JSON.stringify({ event: "add", job }));

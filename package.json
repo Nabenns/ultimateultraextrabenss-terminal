@@ -9,7 +9,8 @@
     "test:watch": "vitest",
     "start": "node dist/hub.js",
     "smoke": "npm run build && node dist/hub.js agents.smoke.json",
-    "full": "npm run build && node dist/hub.js agents.config.json"
+    "full": "npm run build && node dist/hub.js agents.config.json",
+    "doctor": "npm run build && node scripts/doctor.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",

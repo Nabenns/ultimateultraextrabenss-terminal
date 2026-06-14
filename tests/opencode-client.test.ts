@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { OpencodeClient, extractConversation, sumUsage } from "../src/opencode-client.js";
+import { OpencodeClient, extractConversation, sumUsage, newestPartTime } from "../src/opencode-client.js";
 
 function mockFetch(responses: Record<string, unknown>) {
   return vi.fn(async (url: string, _init?: RequestInit) => {
@@ -132,5 +132,19 @@ describe("sumUsage", () => {
   it("returns zeros for non-array / empty", () => {
     expect(sumUsage({})).toEqual({ tokens: 0, cost: 0 });
     expect(sumUsage([])).toEqual({ tokens: 0, cost: 0 });
+  });
+});
+
+describe("newestPartTime", () => {
+  it("returns the max part end/start timestamp", () => {
+    const messages = [
+      { parts: [{ type: "text", text: "a", time: { start: 100, end: 200 } }] },
+      { parts: [{ type: "tool", time: { start: 500 } }, { type: "text", time: { start: 300, end: 350 } }] },
+    ];
+    expect(newestPartTime(messages)).toBe(500);
+  });
+  it("returns null when no timestamps / non-array", () => {
+    expect(newestPartTime({})).toBeNull();
+    expect(newestPartTime([{ parts: [{ type: "text" }] }])).toBeNull();
   });
 });

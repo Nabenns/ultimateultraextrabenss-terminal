@@ -13,6 +13,8 @@ export interface Job {
   startedAt: number | null;
   /** ms epoch when the job reached a terminal state (null until then). */
   finishedAt: number | null;
+  /** True when a running job has shown no worker activity past the stall threshold. */
+  stalled: boolean;
 }
 
 export interface WorkerSpec {

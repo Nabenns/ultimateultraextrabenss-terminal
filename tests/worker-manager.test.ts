@@ -95,4 +95,33 @@ describe("WorkerManager.spawnAll", () => {
     const mgr = new WorkerManager([spec], spawnFn);
     expect(() => mgr.spawnOne("ghost")).toThrow(/unknown worker/i);
   });
+
+  it("killAll kills every worker's port", () => {
+    const killed: number[] = [];
+    const spawnFn = vi.fn((_c: string, _a: string[], _o: SpawnOptions) => ({ pid: 1 }));
+    const specs = [spec, { ...spec, name: "backend", port: 4107 }];
+    const mgr = new WorkerManager(specs, spawnFn, (port) => killed.push(port));
+    mgr.killAll();
+    expect(killed.sort()).toEqual([4106, 4107]);
+  });
+
+  it("killOne kills the named worker's port", () => {
+    const killed: number[] = [];
+    const spawnFn = vi.fn((_c: string, _a: string[], _o: SpawnOptions) => ({ pid: 1 }));
+    const mgr = new WorkerManager([spec], spawnFn, (port) => killed.push(port));
+    mgr.killOne("frontend");
+    expect(killed).toEqual([4106]);
+  });
+
+  it("killAll continues past a failing port kill", () => {
+    const killed: number[] = [];
+    const spawnFn = vi.fn((_c: string, _a: string[], _o: SpawnOptions) => ({ pid: 1 }));
+    const specs = [spec, { ...spec, name: "backend", port: 4107 }];
+    const mgr = new WorkerManager(specs, spawnFn, (port) => {
+      if (port === 4106) throw new Error("boom");
+      killed.push(port);
+    });
+    mgr.killAll();
+    expect(killed).toEqual([4107]);
+  });
 });

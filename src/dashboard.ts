@@ -48,6 +48,8 @@ export interface DashboardDeps {
   getModels?: () => Record<string, string | null>;
   /** Sets (or clears, when model is null/empty) a role's model override. Optional. */
   setModel?: (role: string, model: string | null) => void;
+  /** Kills all worker servers (cleanup). Optional. */
+  onKillAll?: () => void;
 }
 
 /** Build the JSON snapshot the dashboard renders. Pure + directly testable. */
@@ -134,6 +136,7 @@ export function dashboardHtml(): string {
   .job .meta { font-size: 12px; }
   .badge { font-size: 11px; padding: 1px 7px; border-radius: 4px; color: #0d1117; font-weight: 700; }
   .elapsed { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .stalled-tag { font-size: 11px; color: #f59e0b; font-weight: 700; }
   .empty { color: var(--muted); font-style: italic; padding: 6px 0; }
   .summary-val { font-weight: 700; }
   /* Worker conversation modal */
@@ -230,8 +233,10 @@ function jobView(j){
   } else if ((j.state === 'done' || j.state === 'failed') && j.startedAt && j.finishedAt) {
     timing = ' <span class="elapsed">'+fmtDur(j.finishedAt-j.startedAt)+'</span>';
   }
+  const stalled = (j.state === 'running' && j.stalled)
+    ? ' <span class="stalled-tag">stalled?</span>' : '';
   return '<div class="job" style="border-left-color:'+color+'">'
-    + '<div><span class="badge" style="background:'+color+'">'+j.state+'</span>'+timing+'</div>'
+    + '<div><span class="badge" style="background:'+color+'">'+j.state+'</span>'+timing+stalled+'</div>'
     + '<div class="task">'+esc(j.prompt)+'</div>'+summary+todos+'</div>';
 }
 // Tick all live "running" elapsed counters once per second without a full refetch.
@@ -434,6 +439,12 @@ export async function startDashboard(deps: DashboardDeps, port: number): Promise
       const replies = deps.drainReplies ? deps.drainReplies() : [];
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify({ replies }));
+      return;
+    }
+    if (req.url === "/api/workers/killall" && req.method === "POST") {
+      deps.onKillAll?.();
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ ok: true }));
       return;
     }
     if (req.url === "/api/models" && (!req.method || req.method === "GET")) {

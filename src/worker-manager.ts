@@ -3,6 +3,9 @@ import type { WorkerSpec } from "./types.js";
 
 export type SpawnFn = (cmd: string, args: string[], opts: SpawnOptions) => { pid?: number };
 
+/** Kills whatever process is listening on a TCP port. Injected for testability. */
+export type PortKiller = (port: number) => void;
+
 /**
  * Build `wt.exe` args for one worker: a titled new tab running the headless
  * opencode server, plus an optional split pane attaching a visible TUI.
@@ -56,6 +59,7 @@ export class WorkerManager {
   constructor(
     private readonly specs: WorkerSpec[],
     private readonly spawnFn: SpawnFn = defaultSpawn,
+    private readonly killPort: PortKiller = defaultKillPort,
   ) {}
 
   spawnAll(): void {
@@ -77,6 +81,28 @@ export class WorkerManager {
     this.procs.set(spec.name, proc);
   }
 
+  /**
+   * Kill the opencode server on a worker's port. Workers are launched via
+   * wt.exe (which forwards then exits), so we can't track the opencode PID —
+   * killing by the known port is the reliable cleanup path on Windows.
+   */
+  killOne(name: string): void {
+    const spec = this.specs.find((s) => s.name === name);
+    if (!spec) throw new Error(`unknown worker: ${name}`);
+    this.killPort(spec.port);
+  }
+
+  /** Kill every configured worker's server. Used for cleanup on shutdown. */
+  killAll(): void {
+    for (const spec of this.specs) {
+      try {
+        this.killPort(spec.port);
+      } catch {
+        // best-effort cleanup; keep going
+      }
+    }
+  }
+
   pidOf(name: string): number | undefined {
     return this.procs.get(name)?.pid;
   }
@@ -86,4 +112,15 @@ function defaultSpawn(cmd: string, args: string[], opts: SpawnOptions): ChildPro
   const child = spawn(cmd, args, opts);
   child.unref();
   return child;
+}
+
+/** Windows: find the PID listening on `port` and taskkill it (and its tree). */
+function defaultKillPort(port: number): void {
+  // PowerShell one-liner: resolve owning PID via Get-NetTCPConnection, then kill.
+  const ps = `$p=(Get-NetTCPConnection -LocalPort ${port} -State Listen -ErrorAction SilentlyContinue).OwningProcess; if ($p) { taskkill /PID $p /T /F }`;
+  const child = spawn("powershell", ["-NoProfile", "-Command", ps], {
+    detached: true,
+    stdio: "ignore",
+  });
+  child.unref();
 }

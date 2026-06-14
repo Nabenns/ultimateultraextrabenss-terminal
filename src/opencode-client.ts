@@ -94,6 +94,20 @@ export class OpencodeClient {
     }
   }
 
+  /**
+   * Best-effort: the newest part timestamp (ms epoch) across a session's
+   * messages — the true "last activity" signal. Returns null on error/none.
+   */
+  async lastActivityAt(sessionID: string): Promise<number | null> {
+    try {
+      const res = await this.get(`/session/${sessionID}/message`);
+      const messages = (await res.json()) as unknown;
+      return newestPartTime(messages);
+    } catch {
+      return null;
+    }
+  }
+
   async abort(sessionID: string): Promise<void> {
     await this.post(`/session/${sessionID}/abort`);
   }
@@ -130,6 +144,22 @@ export class OpencodeClient {
 export interface UsageTotals {
   tokens: number;
   cost: number;
+}
+
+/** Newest part timestamp (ms epoch) across an opencode /message payload, or null. */
+export function newestPartTime(messages: unknown): number | null {
+  if (!Array.isArray(messages)) return null;
+  let newest = 0;
+  for (const entry of messages) {
+    const parts = (entry as { parts?: unknown }).parts;
+    if (!Array.isArray(parts)) continue;
+    for (const p of parts) {
+      const time = (p as { time?: { start?: number; end?: number } }).time;
+      const t = time?.end ?? time?.start;
+      if (typeof t === "number" && t > newest) newest = t;
+    }
+  }
+  return newest > 0 ? newest : null;
 }
 
 /** Sum tokens.total + cost across an opencode /message payload. */

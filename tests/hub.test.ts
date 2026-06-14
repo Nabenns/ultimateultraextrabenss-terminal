@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { handleWorkerEvent, runHealthCheck } from "../src/hub.js";
+import { handleWorkerEvent, runHealthCheck, runStallCheck } from "../src/hub.js";
 import { StatusBoard } from "../src/status-board.js";
 import type { WorkerSpec } from "../src/types.js";
 
@@ -142,5 +142,37 @@ describe("runHealthCheck", () => {
 
     expect(manager.spawnOne).not.toHaveBeenCalled();
     expect(health.get("frontend")).toBe(true);
+  });
+});
+
+describe("runStallCheck", () => {
+  it("flags a running job with no recent activity as stalled", async () => {
+    const board = new StatusBoard();
+    const job = board.addJob("researcher", "deep task");
+    board.update(job.id, { state: "running", sessionID: "ses_x" });
+    const now = Date.now();
+    // last activity 5 minutes ago, threshold 3 min -> stalled
+    const clients = new Map([["researcher", { lastActivityAt: vi.fn(async () => now - 300000) }]]);
+    await runStallCheck(board as never, clients as never, 180000, now);
+    expect(board.get(job.id)!.stalled).toBe(true);
+  });
+
+  it("does not flag a job with recent activity", async () => {
+    const board = new StatusBoard();
+    const job = board.addJob("researcher", "task");
+    board.update(job.id, { state: "running", sessionID: "ses_x" });
+    const now = Date.now();
+    const clients = new Map([["researcher", { lastActivityAt: vi.fn(async () => now - 5000) }]]);
+    await runStallCheck(board as never, clients as never, 180000, now);
+    expect(board.get(job.id)!.stalled).toBe(false);
+  });
+
+  it("ignores non-running jobs", async () => {
+    const board = new StatusBoard();
+    const job = board.addJob("researcher", "task");
+    board.update(job.id, { state: "done", sessionID: "ses_x" });
+    const clients = new Map([["researcher", { lastActivityAt: vi.fn(async () => 0) }]]);
+    await runStallCheck(board as never, clients as never, 180000, Date.now());
+    expect(board.get(job.id)!.stalled).toBe(false);
   });
 });

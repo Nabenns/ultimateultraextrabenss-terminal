@@ -115,6 +115,10 @@ export async function main(): Promise<void> {
   // Cached fleet-wide token/cost totals, refreshed periodically (see usageTimer).
   let usageTotals = { tokens: 0, cost: 0 };
 
+  // Worker manager created before the dashboard so its deps can reference it
+  // (e.g. kill-all). Workers are spawned right after the dashboard is live.
+  const manager = new WorkerManager(cfg.workers);
+
   // Start the dashboard FIRST, before spawning/waiting on workers, so the web UI
   // is reachable immediately and workers visibly fill in as they become healthy.
   const stopDashboard = await startDashboard(
@@ -129,6 +133,7 @@ export async function main(): Promise<void> {
         if (model) modelByRole.set(role, model);
         else modelByRole.delete(role);
       },
+      onKillAll: () => manager.killAll(),
       onChat: (message) => orchestratorAI.handle(message),
       drainReplies: () => autoReplies.splice(0, autoReplies.length),
       getConversation: async (name) => {
@@ -154,7 +159,6 @@ export async function main(): Promise<void> {
   openBrowser(`http://127.0.0.1:${HUB_PORT}`);
 
   // Spawn worker terminals.
-  const manager = new WorkerManager(cfg.workers);
   manager.spawnAll();
 
   const stopListeners: Array<() => void> = [];
@@ -207,11 +211,19 @@ export async function main(): Promise<void> {
     })();
   }, 10000);
 
+  // Periodic stall watch: flag running jobs with no worker activity for >3 min.
+  const stallTimer = setInterval(() => {
+    void runStallCheck(board, clients);
+  }, 30000);
+
   process.on("SIGINT", () => {
     clearInterval(healthTimer);
     clearInterval(usageTimer);
+    clearInterval(stallTimer);
     for (const stop of stopListeners) stop();
     stopDashboard();
+    // Clean up worker servers so they don't orphan across Hub restarts.
+    manager.killAll();
     process.exit(0);
   });
 
@@ -296,6 +308,36 @@ export async function runHealthCheck(
           console.error(`[health] failed to restart ${w.name}:`, err);
         }
       }
+    }),
+  );
+}
+
+interface ActivityClient {
+  lastActivityAt(sessionID: string): Promise<number | null>;
+}
+
+/**
+ * Flags running jobs whose worker has shown no activity past `stallMs`. Pure
+ * over its injected board + clients; updates each job's `stalled` flag in place.
+ * Uses the newest part timestamp (true activity) — not board lastUpdate, since a
+ * busy worker reading files doesn't touch the board.
+ */
+export async function runStallCheck(
+  board: Pick<StatusBoard, "getAll" | "update">,
+  clients: Map<string, ActivityClient>,
+  stallMs = 180000,
+  now: number = Date.now(),
+): Promise<void> {
+  await Promise.all(
+    board.getAll().map(async (job) => {
+      if (job.state !== "running" || !job.sessionID) return;
+      const client = clients.get(job.role);
+      if (!client) return;
+      const last = await client.lastActivityAt(job.sessionID);
+      // Fall back to startedAt if the worker has emitted nothing yet.
+      const ref = last ?? job.startedAt ?? now;
+      const stalled = now - ref > stallMs;
+      if (stalled !== job.stalled) board.update(job.id, { stalled });
     }),
   );
 }
