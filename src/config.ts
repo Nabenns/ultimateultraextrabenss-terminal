@@ -33,7 +33,8 @@ export function parseConfig(raw: unknown): HubConfig {
   return { workers: parsed.workers };
 }
 
-export function loadConfig(path = "agents.config.json"): HubConfig {
-  const raw = JSON.parse(readFileSync(path, "utf8"));
+export function loadConfig(path?: string): HubConfig {
+  const resolved = path ?? process.env.HUB_CONFIG ?? "agents.config.json";
+  const raw = JSON.parse(readFileSync(resolved, "utf8"));
   return parseConfig(raw);
 }
