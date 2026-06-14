@@ -149,9 +149,32 @@ export function sumUsage(messages: unknown): UsageTotals {
 export interface ConversationTurn {
   role: string;
   text: string;
+  /** "text" (default), "tool" (file/command activity), or "reasoning". */
+  kind?: "text" | "tool" | "reasoning";
 }
 
-/** Extract user/assistant turns + text from an opencode /message payload. */
+/** Short human label for a tool part, e.g. `read package.json` or `bash: npm test`. */
+function describeTool(part: { tool?: unknown; state?: unknown }): string {
+  const tool = typeof part.tool === "string" ? part.tool : "tool";
+  const state = part.state as { status?: string; input?: Record<string, unknown> } | undefined;
+  const input = state?.input ?? {};
+  const status = state?.status ? ` [${state.status}]` : "";
+  // Pull the most informative arg per common tool.
+  const arg =
+    (typeof input.filePath === "string" && input.filePath) ||
+    (typeof input.path === "string" && input.path) ||
+    (typeof input.pattern === "string" && input.pattern) ||
+    (typeof input.command === "string" && input.command) ||
+    (typeof input.query === "string" && input.query) ||
+    "";
+  return `${tool}${status}${arg ? ` — ${arg}` : ""}`;
+}
+
+/**
+ * Extract a rich activity feed from an opencode /message payload: assistant/user
+ * text, tool calls (file reads, commands), and reasoning — so the UI can show
+ * what a worker is actually doing while it runs.
+ */
 export function extractConversation(messages: unknown): ConversationTurn[] {
   if (!Array.isArray(messages)) return [];
   const turns: ConversationTurn[] = [];
@@ -159,16 +182,16 @@ export function extractConversation(messages: unknown): ConversationTurn[] {
     const role = (entry as { info?: { role?: string } })?.info?.role;
     const parts = (entry as { parts?: unknown }).parts;
     if (typeof role !== "string" || !Array.isArray(parts)) continue;
-    const text = parts
-      .filter(
-        (p): p is { type: "text"; text: string } =>
-          !!p &&
-          (p as { type?: string }).type === "text" &&
-          typeof (p as { text?: unknown }).text === "string",
-      )
-      .map((p) => p.text)
-      .join("");
-    if (text.trim()) turns.push({ role, text });
+    for (const p of parts) {
+      const part = p as { type?: string; text?: unknown; tool?: unknown; state?: unknown };
+      if (part.type === "text" && typeof part.text === "string" && part.text.trim()) {
+        turns.push({ role, text: part.text, kind: "text" });
+      } else if (part.type === "tool") {
+        turns.push({ role, text: describeTool(part), kind: "tool" });
+      } else if (part.type === "reasoning" && typeof part.text === "string" && part.text.trim()) {
+        turns.push({ role, text: part.text, kind: "reasoning" });
+      }
+    }
   }
   return turns;
 }

@@ -83,20 +83,38 @@ describe("OpencodeClient", () => {
 });
 
 describe("extractConversation", () => {
-  it("extracts user/assistant turns with concatenated text", () => {
+  it("emits text turns per text part with kind 'text'", () => {
     const messages = [
       { info: { role: "user" }, parts: [{ type: "text", text: "build login" }] },
-      { info: { role: "assistant" }, parts: [{ type: "text", text: "Built " }, { type: "text", text: "POST /login" }] },
+      { info: { role: "assistant" }, parts: [{ type: "text", text: "Built POST /login" }] },
     ];
     expect(extractConversation(messages)).toEqual([
-      { role: "user", text: "build login" },
-      { role: "assistant", text: "Built POST /login" },
+      { role: "user", text: "build login", kind: "text" },
+      { role: "assistant", text: "Built POST /login", kind: "text" },
     ]);
   });
 
-  it("skips entries with no text and returns [] for non-arrays", () => {
+  it("emits tool activity with a human label", () => {
+    const messages = [
+      {
+        info: { role: "assistant" },
+        parts: [
+          { type: "tool", tool: "read", state: { status: "completed", input: { filePath: "C:\\proj\\package.json" } } },
+          { type: "tool", tool: "bash", state: { status: "running", input: { command: "npm test" } } },
+        ],
+      },
+    ];
+    const turns = extractConversation(messages);
+    expect(turns[0]).toEqual({ role: "assistant", text: "read [completed] — C:\\proj\\package.json", kind: "tool" });
+    expect(turns[1]).toEqual({ role: "assistant", text: "bash [running] — npm test", kind: "tool" });
+  });
+
+  it("emits reasoning parts and returns [] for non-arrays", () => {
     expect(extractConversation({})).toEqual([]);
-    expect(extractConversation([{ info: { role: "assistant" }, parts: [{ type: "tool", id: "x" }] }])).toEqual([]);
+    const turns = extractConversation([
+      { info: { role: "assistant" }, parts: [{ type: "reasoning", text: "thinking..." }] },
+    ]);
+    expect(turns).toEqual([{ role: "assistant", text: "thinking...", kind: "reasoning" }]);
   });
 });
 

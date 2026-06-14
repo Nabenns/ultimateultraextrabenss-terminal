@@ -150,6 +150,8 @@ export function dashboardHtml(): string {
   .turn { padding: 8px 12px; border-radius: 8px; white-space: pre-wrap; word-break: break-word; }
   .turn.user { background: #1f6feb22; border: 1px solid #1f6feb44; }
   .turn.assistant { background: var(--panel); border: 1px solid var(--border); }
+  .turn.tool { background: transparent; border: 1px dashed var(--border2); color: var(--muted); font-size: 13px; }
+  .turn.reasoning { background: transparent; border: none; color: var(--muted); font-style: italic; opacity: .8; padding: 2px 12px; }
   .turn .role { font-size: 11px; text-transform: uppercase; color: var(--muted); margin-bottom: 3px; }
   /* Responsive: stack chat above workers on narrow screens */
   @media (max-width: 720px) {
@@ -341,10 +343,16 @@ async function loadWorkerConvo(){
       body.innerHTML = '<div class="empty">Belum ada percakapan. Worker ini belum dapat tugas.</div>';
       return;
     }
-    body.innerHTML = d.turns.map(t =>
-      '<div class="turn '+(t.role==='user'?'user':'assistant')+'">'
-      + '<div class="role">'+esc(t.role)+'</div>'+esc(t.text)+'</div>'
-    ).join('');
+    body.innerHTML = d.turns.map(t => {
+      const kind = t.kind || 'text';
+      const cls = kind === 'tool' ? 'tool' : kind === 'reasoning' ? 'reasoning'
+        : (t.role === 'user' ? 'user' : 'assistant');
+      const label = kind === 'tool' ? '⚙ ' + esc(t.text)
+        : kind === 'reasoning' ? '💭 ' + esc(t.text)
+        : '<div class="role">'+esc(t.role)+'</div>'+esc(t.text);
+      return '<div class="turn '+cls+'">'+label+'</div>';
+    }).join('');
+    body.scrollTop = body.scrollHeight;
   } catch (e) {
     document.getElementById('modalbody').innerHTML = '<div class="empty">gagal memuat percakapan</div>';
   }
