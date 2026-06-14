@@ -25,6 +25,9 @@ export class Orchestrator {
     private readonly clientFor: ClientFactory,
   ) {}
 
+  // Single-writer assumption: dispatch is driven sequentially by the Hub
+  // (Hermes via MCP), so this check-then-create is not guarded against
+  // concurrent same-role dispatch. Add locking only if that assumption changes.
   private async sessionFor(role: string): Promise<{ client: WorkerClient; sessionID: string }> {
     const client = this.clientFor(role);
     let sessionID = this.sessions.get(role);
@@ -40,6 +43,10 @@ export class Orchestrator {
     for (const a of assignments) {
       const job = this.board.addJob(a.role, a.task);
       const { client, sessionID } = await this.sessionFor(a.role);
+      // Job is marked running before the prompt is fired. If promptAsync
+      // throws, the error propagates out of dispatch (remaining assignments
+      // in this batch are skipped); recovery is via SSE-driven verify and
+      // Hermes re-dispatch. "failed" state is reserved for worker-reported failure.
       this.board.update(job.id, { state: "running", sessionID });
       await client.promptAsync(sessionID, a.task, null, null);
       jobs.push(this.board.get(job.id)!);
