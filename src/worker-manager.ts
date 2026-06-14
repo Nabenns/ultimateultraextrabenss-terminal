@@ -11,17 +11,18 @@ export type SpawnFn = (cmd: string, args: string[], opts: SpawnOptions) => { pid
 
 // Headless workers have no TUI to approve permission prompts, so an inherited
 // "bash"/"edit": "ask" would hang the worker forever the moment it runs a tool.
-// We inject a worker-only config (via OPENCODE_CONFIG_CONTENT, merged last) that
-// auto-allows actions — without touching the user's global opencode config.
-// JSON contains no single quotes, so it is safe inside a PowerShell '...' literal.
-const WORKER_PERMISSION_CONFIG = JSON.stringify({
+// We pass a worker-only config via the OPENCODE_CONFIG_CONTENT env var (merged
+// last by opencode) that auto-allows actions — without touching the user's
+// global config. It goes through the spawn ENVIRONMENT (inherited wt → pwsh →
+// opencode), NOT the command line, to avoid colliding with wt.exe's ';'
+// subcommand delimiter.
+export const WORKER_PERMISSION_CONFIG = JSON.stringify({
   $schema: "https://opencode.ai/config.json",
   permission: { bash: "allow", edit: "allow", webfetch: "allow" },
 });
 
 export function buildWtArgs(spec: WorkerSpec): string[] {
-  const env = `$env:OPENCODE_CONFIG_CONTENT='${WORKER_PERMISSION_CONFIG}'; `;
-  const serveCmd = `${env}opencode serve --port ${spec.port} --hostname 127.0.0.1`;
+  const serveCmd = `opencode serve --port ${spec.port} --hostname 127.0.0.1`;
   const args = [
     "new-tab",
     "--title",
@@ -70,6 +71,8 @@ export class WorkerManager {
     const proc = this.spawnFn("wt.exe", buildWtArgs(spec), {
       detached: true,
       stdio: "ignore",
+      // Forwarded by wt.exe to the pane's shell and inherited by opencode.
+      env: { ...process.env, OPENCODE_CONFIG_CONTENT: WORKER_PERMISSION_CONFIG },
     });
     this.procs.set(spec.name, proc);
   }

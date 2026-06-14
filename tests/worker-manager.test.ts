@@ -23,13 +23,19 @@ describe("buildWtArgs", () => {
   });
 
   it("injects a worker permission config so headless workers don't hang on approval", () => {
+    // The env must NOT be on the command line (would collide with wt.exe's ';'
+    // subcommand delimiter); it's passed via the spawn environment instead.
     const joined = buildWtArgs(spec).join(" ");
-    // env var set before serve, with bash auto-allowed
-    expect(joined).toContain("OPENCODE_CONFIG_CONTENT");
-    expect(joined).toContain('"bash":"allow"');
-    // the env assignment precedes the serve command
-    const cmd = buildWtArgs(spec).find((a) => a.includes("opencode serve"))!;
-    expect(cmd.indexOf("OPENCODE_CONFIG_CONTENT")).toBeLessThan(cmd.indexOf("opencode serve"));
+    expect(joined).not.toContain("OPENCODE_CONFIG_CONTENT");
+
+    const spawnFn = vi.fn(
+      (_cmd: string, _args: string[], _opts: SpawnOptions) => ({ pid: 1 }),
+    );
+    const mgr = new WorkerManager([spec], spawnFn);
+    mgr.spawnOne("frontend");
+    const opts = spawnFn.mock.calls[0]![2] as SpawnOptions;
+    const env = (opts.env ?? {}) as Record<string, string>;
+    expect(env.OPENCODE_CONFIG_CONTENT).toContain('"bash":"allow"');
   });
 
   it("omits attach pane when attach is false", () => {
