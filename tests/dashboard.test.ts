@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { buildSnapshot, startDashboard } from "../src/dashboard.js";
+import { buildSnapshot, startDashboard, dashboardHtml } from "../src/dashboard.js";
 import { StatusBoard } from "../src/status-board.js";
 
 describe("buildSnapshot", () => {
@@ -91,6 +91,16 @@ describe("dashboard HTTP server", () => {
     } finally {
       stop();
     }
+  });
+
+  it("serves client JS that is syntactically valid", () => {
+    const html = dashboardHtml();
+    const start = html.indexOf("<script>") + "<script>".length;
+    const end = html.indexOf("</script>");
+    const js = html.slice(start, end);
+    // Throws SyntaxError if the inlined client script is malformed (e.g. a
+    // broken escaped-quote handler), which would silently kill all dashboard JS.
+    expect(() => new Function(js)).not.toThrow();
   });
 
   it("GET /api/worker/:name returns that worker's conversation turns", async () => {

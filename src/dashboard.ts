@@ -75,7 +75,7 @@ const STATE_COLORS: Record<string, string> = {
 };
 
 /** Static HTML shell; data is fetched client-side from /api/status. */
-function dashboardHtml(): string {
+export function dashboardHtml(): string {
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -232,7 +232,7 @@ async function refresh(){
     document.getElementById('updated').textContent =
       'updated ' + new Date(d.generatedAt).toLocaleTimeString();
     document.getElementById('workers').innerHTML = d.workers.map(w =>
-      '<div class="worker" data-worker="'+esc(w.name)+'" onclick="openWorker(\''+esc(w.name)+'\')"><div class="worker-head">'+healthDot(w.healthy)
+      '<div class="worker" data-worker="'+esc(w.name)+'"><div class="worker-head">'+healthDot(w.healthy)
       + '<span class="name">'+esc(w.name)+'</span>'
       + '<span class="muted">'+w.jobs.length+' job'+(w.jobs.length===1?'':'s')+'</span></div>'
       + '<div class="jobs">'+(w.jobs.length ? w.jobs.map(jobView).join('') : '<div class="empty">no jobs yet</div>')+'</div></div>'
@@ -351,6 +351,11 @@ async function loadWorkerConvo(){
 }
 document.getElementById('modalbg').addEventListener('click', (e) => {
   if (e.target.id === 'modalbg') closeWorker();
+});
+// Event delegation: click a worker card (data-worker) to open its conversation.
+document.getElementById('workers').addEventListener('click', (e) => {
+  const card = e.target.closest('.worker');
+  if (card && card.dataset.worker) openWorker(card.dataset.worker);
 });
 refresh();
 setInterval(refresh, 2000);
