@@ -37,25 +37,22 @@ export function createToolHandlers(deps: McpDeps) {
   };
 }
 
+// Handler errors intentionally propagate; McpServer.registerTool converts a
+// thrown error into an isError tool result so the client sees the failure.
+const asText = (result: unknown) => ({
+  content: [{ type: "text" as const, text: JSON.stringify(result) }],
+});
+
 /**
- * Wires the four tool handlers onto an McpServer and serves them over the
- * Streamable HTTP transport on 127.0.0.1:port. Returns a shutdown function.
+ * Builds a fresh McpServer with the four tools registered against `deps`.
  *
  * Verified against @modelcontextprotocol/sdk@1.29.0:
- * - McpServer.registerTool(name, { description, inputSchema }, handler) where
- *   inputSchema is a Zod raw shape; handler receives the parsed args object.
- * - StreamableHTTPServerTransport({ sessionIdGenerator: undefined }) for
- *   stateless mode; transport.handleRequest(req, res) bridges Node http.
+ * McpServer.registerTool(name, { description, inputSchema }, handler) where
+ * inputSchema is a Zod raw shape; handler receives the parsed args object.
  */
-export async function startMcpServer(deps: McpDeps, port: number): Promise<() => void> {
+export function buildMcpServer(deps: McpDeps): McpServer {
   const handlers = createToolHandlers(deps);
   const server = new McpServer({ name: "ben-terminal-hub", version: "0.1.0" });
-
-  // Handler errors intentionally propagate; McpServer.registerTool converts a
-  // thrown error into an isError tool result so Hermes sees the failure.
-  const asText = (result: unknown) => ({
-    content: [{ type: "text" as const, text: JSON.stringify(result) }],
-  });
 
   server.registerTool(
     "dispatch_task",
@@ -101,12 +98,44 @@ export async function startMcpServer(deps: McpDeps, port: number): Promise<() =>
     async (args) => asText(await handlers.send_message(args)),
   );
 
-  const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
-  await server.connect(transport);
+  return server;
+}
 
+/**
+ * Serves the MCP tools over Streamable HTTP on 127.0.0.1:port. Returns a
+ * shutdown function.
+ *
+ * Stateless mode (sessionIdGenerator: undefined) requires a FRESH McpServer +
+ * transport per request, with enableJsonResponse so the response is a single
+ * JSON body rather than a long-lived SSE stream. Reusing one shared transport
+ * across requests returns 500 on the initialize handshake and corrupts the
+ * per-request stream lifecycle.
+ */
+export async function startMcpServer(deps: McpDeps, port: number): Promise<() => void> {
   const http = createServer((req, res) => {
-    void transport.handleRequest(req, res);
+    void (async () => {
+      const server = buildMcpServer(deps);
+      const transport = new StreamableHTTPServerTransport({
+        sessionIdGenerator: undefined,
+        enableJsonResponse: true,
+      });
+      res.on("close", () => {
+        void transport.close();
+        void server.close();
+      });
+      try {
+        await server.connect(transport);
+        await transport.handleRequest(req, res);
+      } catch (err) {
+        console.error("MCP request handling failed:", err);
+        if (!res.headersSent) {
+          res.writeHead(500, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: "internal error" }));
+        }
+      }
+    })();
   });
+
   await new Promise<void>((resolve, reject) => {
     http.once("error", reject);
     http.listen(port, "127.0.0.1", resolve);
@@ -114,6 +143,5 @@ export async function startMcpServer(deps: McpDeps, port: number): Promise<() =>
 
   return () => {
     http.close();
-    void server.close();
   };
 }
