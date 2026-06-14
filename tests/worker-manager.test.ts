@@ -60,4 +60,23 @@ describe("WorkerManager.spawnAll", () => {
     mgr.spawnAll();
     expect(mgr.pidOf("frontend")).toBe(999);
   });
+
+  it("spawnOne respawns a single named worker", async () => {
+    const spawnFn = vi.fn(
+      (_cmd: string, _args: string[], _opts: SpawnOptions) => ({ pid: 777 }),
+    );
+    const mgr = new WorkerManager([spec], spawnFn);
+    mgr.spawnOne("frontend");
+    expect(spawnFn).toHaveBeenCalledTimes(1);
+    expect(spawnFn.mock.calls[0]![0]).toBe("wt.exe");
+    expect(mgr.pidOf("frontend")).toBe(777);
+  });
+
+  it("spawnOne throws for an unknown worker name", async () => {
+    const spawnFn = vi.fn(
+      (_cmd: string, _args: string[], _opts: SpawnOptions) => ({ pid: 1 }),
+    );
+    const mgr = new WorkerManager([spec], spawnFn);
+    expect(() => mgr.spawnOne("ghost")).toThrow(/unknown worker/i);
+  });
 });

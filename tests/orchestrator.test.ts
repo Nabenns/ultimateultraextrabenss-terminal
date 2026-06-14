@@ -30,6 +30,17 @@ describe("Orchestrator", () => {
     expect(board.getAll()).toHaveLength(1);
   });
 
+  it("passes the role's agent (from agentFor) into promptAsync", async () => {
+    const board = new StatusBoard();
+    const client = fakeClient();
+    const agentFor = (role: string) => (role === "skeptic" ? "skeptic" : null);
+    const orch = new Orchestrator(board, () => client as never, agentFor);
+
+    await orch.dispatch([{ role: "skeptic", task: "find the risks" }]);
+
+    expect(client.promptAsync).toHaveBeenCalledWith("ses_x", "find the risks", "skeptic", null);
+  });
+
   it("reuses an existing session for a role on a second dispatch", async () => {
     const board = new StatusBoard();
     const client = fakeClient();
@@ -72,5 +83,23 @@ describe("Orchestrator", () => {
     const got = board.get(job!.id)!;
     expect(got.state).toBe("running");
     expect(got.remainingTodos).toEqual(["finish wiring"]);
+  });
+
+  it("ensureSession creates a session for an undispatched role and delivers via agent", async () => {
+    const board = new StatusBoard();
+    const client = fakeClient();
+    const agentFor = (role: string) => (role === "backend" ? "backend" : null);
+    const orch = new Orchestrator(board, () => client as never, agentFor);
+
+    const handle = await orch.ensureSession("backend");
+    expect(client.createSession).toHaveBeenCalledTimes(1);
+    expect(handle.sessionID).toBe("ses_x");
+
+    await handle.deliver("hello backend");
+    expect(client.promptAsync).toHaveBeenCalledWith("ses_x", "hello backend", "backend", null);
+
+    // A subsequent dispatch reuses the same session (no new createSession).
+    await orch.dispatch([{ role: "backend", task: "do work" }]);
+    expect(client.createSession).toHaveBeenCalledTimes(1);
   });
 });

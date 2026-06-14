@@ -47,12 +47,19 @@ export class WorkerManager {
 
   spawnAll(): void {
     for (const spec of this.specs) {
-      const proc = this.spawnFn("wt.exe", buildWtArgs(spec), {
-        detached: true,
-        stdio: "ignore",
-      });
-      this.procs.set(spec.name, proc);
+      this.spawnOne(spec.name);
     }
+  }
+
+  /** (Re)spawn a single worker by name. Used for startup and auto-restart. */
+  spawnOne(name: string): void {
+    const spec = this.specs.find((s) => s.name === name);
+    if (!spec) throw new Error(`unknown worker: ${name}`);
+    const proc = this.spawnFn("wt.exe", buildWtArgs(spec), {
+      detached: true,
+      stdio: "ignore",
+    });
+    this.procs.set(spec.name, proc);
   }
 
   pidOf(name: string): number | undefined {

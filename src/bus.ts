@@ -5,7 +5,7 @@ export interface WorkerHandle {
   deliver: (text: string) => Promise<void>;
 }
 
-export type WorkerResolver = (name: string) => WorkerHandle | null;
+export type WorkerResolver = (name: string) => Promise<WorkerHandle | null> | WorkerHandle | null;
 
 export class MessageBus {
   private log: BusMessage[] = [];
@@ -21,14 +21,23 @@ export class MessageBus {
 
     if (msg.to === "*") {
       const targets = this.allWorkerNames.filter((n) => n !== msg.from);
-      for (const name of targets) {
-        const handle = this.resolve(name);
-        if (handle) await handle.deliver(wrapped);
-      }
+      // Fault-isolated fan-out: one worker's delivery failure must not abort
+      // the broadcast to the rest. Failures are logged, not propagated.
+      await Promise.all(
+        targets.map(async (name) => {
+          const handle = await this.resolve(name);
+          if (!handle) return;
+          try {
+            await handle.deliver(wrapped);
+          } catch (err) {
+            console.error(`bus broadcast to ${name} failed:`, err);
+          }
+        }),
+      );
       return;
     }
 
-    const handle = this.resolve(msg.to);
+    const handle = await this.resolve(msg.to);
     if (!handle) throw new Error(`unknown worker: ${msg.to}`);
     await handle.deliver(wrapped);
   }

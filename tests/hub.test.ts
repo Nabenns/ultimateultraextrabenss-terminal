@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
-import { handleWorkerEvent } from "../src/hub.js";
+import { handleWorkerEvent, runHealthCheck } from "../src/hub.js";
 import { StatusBoard } from "../src/status-board.js";
+import type { WorkerSpec } from "../src/types.js";
 
 describe("handleWorkerEvent", () => {
   it("verifies the job tied to a session when it goes idle", async () => {
@@ -60,5 +61,48 @@ describe("handleWorkerEvent", () => {
         properties: { sessionID: "ses_1" },
       }),
     ).resolves.toBeUndefined();
+  });
+});
+
+describe("runHealthCheck", () => {
+  const spec = (name: string): WorkerSpec => ({
+    name,
+    port: 4106,
+    cwd: ".",
+    agent: null,
+    model: null,
+    attach: true,
+  });
+
+  it("restarts a worker that transitions to unhealthy", async () => {
+    const clients = new Map([["frontend", { isHealthy: vi.fn(async () => false) }]]);
+    const manager = { spawnOne: vi.fn() };
+    const health = new Map<string, boolean>([["frontend", true]]); // was healthy
+
+    await runHealthCheck([spec("frontend")], clients as never, manager, health);
+
+    expect(manager.spawnOne).toHaveBeenCalledWith("frontend");
+    expect(health.get("frontend")).toBe(false);
+  });
+
+  it("does not restart a worker that stays unhealthy (no repeated spawn)", async () => {
+    const clients = new Map([["frontend", { isHealthy: vi.fn(async () => false) }]]);
+    const manager = { spawnOne: vi.fn() };
+    const health = new Map<string, boolean>([["frontend", false]]); // already down
+
+    await runHealthCheck([spec("frontend")], clients as never, manager, health);
+
+    expect(manager.spawnOne).not.toHaveBeenCalled();
+  });
+
+  it("does not restart a healthy worker", async () => {
+    const clients = new Map([["frontend", { isHealthy: vi.fn(async () => true) }]]);
+    const manager = { spawnOne: vi.fn() };
+    const health = new Map<string, boolean>();
+
+    await runHealthCheck([spec("frontend")], clients as never, manager, health);
+
+    expect(manager.spawnOne).not.toHaveBeenCalled();
+    expect(health.get("frontend")).toBe(true);
   });
 });

@@ -38,4 +38,32 @@ describe("MessageBus", () => {
       bus.send({ from: "frontend", to: "ghost", text: "hi", timestamp: 3 }),
     ).rejects.toThrow(/unknown worker/i);
   });
+
+  it("isolates broadcast failures: one failing worker doesn't block the rest", async () => {
+    const delivered: string[] = [];
+    const resolver = (name: string) => ({
+      sessionID: `ses_${name}`,
+      deliver: async () => {
+        if (name === "backend") throw new Error("backend down");
+        delivered.push(name);
+      },
+    });
+    const bus = new MessageBus(resolver, ["frontend", "backend", "tester"]);
+    await expect(
+      bus.send({ from: "frontend", to: "*", text: "ping", timestamp: 4 }),
+    ).resolves.toBeUndefined();
+    // backend threw, but tester still received.
+    expect(delivered).toEqual(["tester"]);
+  });
+
+  it("supports an async resolver (e.g. session creation on demand)", async () => {
+    const calls: string[] = [];
+    const resolver = async (name: string) => {
+      await new Promise((r) => setTimeout(r, 1));
+      return { sessionID: `ses_${name}`, deliver: async () => { calls.push(name); } };
+    };
+    const bus = new MessageBus(resolver, ["frontend", "backend"]);
+    await bus.send({ from: "frontend", to: "backend", text: "hi", timestamp: 5 });
+    expect(calls).toEqual(["backend"]);
+  });
 });
